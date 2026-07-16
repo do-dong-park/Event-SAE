@@ -1,0 +1,31 @@
+name: event-sae-dev
+
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - numpy=1.26
+  - pyyaml
+  - pytest
+  - pytorch=2.2.0
+  - pytorch-cuda=12.1
+  - torchvision=0.17.0
+  - pip:
+      # Conda의 CUDA 12.1 빌드를 pip resolver가 덮어쓰지 못하게 고정한다.
+      - torch==2.2.0
+      - torchvision==0.17.0
+      - numpy==1.26.4
+      - transformers==4.48.1
+      - tokenizers==0.21.2
+      - accelerate
+      - einops
+      - nnsight==0.3.3
+      - tqdm
+      - wandb
+      # Event-SAE가 사용하는 upstream SAE 구현과 검증된 commit.
+      - git+https://github.com/saprmarks/dictionary_learning.git@60ec6bf

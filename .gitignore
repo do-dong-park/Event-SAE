@@ -37,6 +37,7 @@ __pycache__/
 venv/
 
 # Editor / OS
+.serena/
 .vscode/
 .idea/
 .DS_Store
