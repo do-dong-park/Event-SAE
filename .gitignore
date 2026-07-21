@@ -43,3 +43,4 @@ venv/
 .DS_Store
 *.swp
 external/openpi-event-sae/
+docs/event_grounded_sae.pdf
