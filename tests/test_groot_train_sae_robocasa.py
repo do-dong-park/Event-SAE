@@ -11,6 +11,7 @@ import torch
 from dictionary_learning.trainers.batch_top_k import BatchTopKSAE
 
 from scripts.groot.audit_sae_checkpoint import main as audit_main
+from scripts.groot.export_pq3_activation_shards import main as export_shards_main
 from scripts.groot.train_sae_robocasa import (
     DEFAULT_CAPTURE_LAYERS,
     DEFAULT_FEATURE_KIND,
@@ -201,6 +202,65 @@ def test_export_activation_cache_cli_round_trip(
     assert activations.dtype == torch.float16
     assert manifest["materialized"] is True
     assert not (save_dir / "trainer_0").exists()
+
+
+def test_streaming_shard_export_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    input_dir = tmp_path / "input"
+    shard_dir = tmp_path / "shards"
+    cache_path = tmp_path / "l15_action_tokens.pt"
+    hidden0, hidden1 = _write_pq3(input_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "export_pq3_activation_shards.py",
+            "export",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(shard_dir),
+            "--trust-pkl",
+            "--activation-dim",
+            "3",
+            "--allow-partial-inventory",
+            "--progress-every",
+            "0",
+        ],
+    )
+    export_shards_main()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "export_pq3_activation_shards.py",
+            "merge",
+            "--shard-dir",
+            str(shard_dir),
+            "--output-cache",
+            str(cache_path),
+            "--progress-every",
+            "0",
+        ],
+    )
+    export_shards_main()
+
+    activations, manifest = load_activation_cache(
+        cache_path,
+        layer_id=15,
+        activation_dim=3,
+    )
+    expected = torch.cat(
+        [
+            hidden0[-1, :, 33:, :].reshape(-1, 3),
+            hidden1[-1, :, 33:, :].reshape(-1, 3),
+        ]
+    )
+    torch.testing.assert_close(activations, expected)
+    assert manifest["num_files"] == 1
+    assert manifest["cache_layout"]["num_shards"] == 1
+    assert manifest["inventory_verified"] is False
 
 
 def test_strict_inventory_rejects_partial_pq3_source(tmp_path: Path) -> None:
