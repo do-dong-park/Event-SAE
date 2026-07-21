@@ -1,10 +1,13 @@
 # GR00T Event-Grounded SAE 재현 계획 — 1/6: L15 SAE 학습
 
-**문서 상태:** **Stage 1 완료** — full-data audit를 통과한 L15 1.2k early-stop checkpoint 선택
+**문서 상태:** **Stage 1 완료** — full-data audit를 통과한 L15 1.2k short-schedule checkpoint 선택
 **작성일:** 2026-07-21
 **현재 과정:** 전체 6단계 중 **1단계**
 **원 논문 파이프라인 대응:** Phase 1의 step (a) activation collection과
 step (b) SAE training 완료
+
+> 빠른 결과 확인은
+> [Stage 1 결과 요약](groot_event_grounded_sae_stage1_summary.md)을 먼저 본다.
 
 ## Index
 
@@ -266,8 +269,13 @@ smoke이며, sparsity 품질 checkpoint로는 사용하지 않는다.
 
 BatchTopK의 inference threshold는 기본값 `-1`이고 upstream trainer에서
 `step > 1000`일 때부터 갱신된다. 정확히 1,000 steps로는 inference sparsity를
-검증할 수 없으므로 pilot을 1,200 steps로 실행해 199회의 threshold update를
-포함했다.
+검증할 수 없으므로 pilot을 1,200 optimizer steps로 실행해 199회의 threshold
+update를 포함했다. 여기서 1.2k는 파일이나 episode 수가 아니라 parameter update
+수다. Batch 4,096 기준 4,915,200 row presentations이며, 770,624-row dataset을
+약 6.38회 사용한 양이다. `InMemoryBatchLoader`는 shuffle마다 완전한 batch
+188개(770,048 rows)를 사용하고 나머지 576개를 무작위로 제외하지만, 매 epoch
+다시 shuffle하므로 두 run 모두 770,624개 unique row를 실질적으로 반복 학습한다.
+770,624 optimizer steps가 필요한 것은 batch size가 1일 때뿐이다.
 
 ```bash
 CUDA_VISIBLE_DEVICES=5 conda run -n event-sae-dev python \
@@ -297,6 +305,26 @@ row 순열에 대해 다음 값을 계산한다.
 - feature activation magnitude
 - encode/decode NaN/Inf
 
+#### Metric 정의와 selected checkpoint 해석
+
+모든 값은 train과 동일한 PQ3 source 분포의 770,560 complete-batch rows에서
+계산했다. 따라서 reconstruction과 sparsity 상태를 판정하는 값이지 held-out
+일반화나 feature 의미를 측정하는 값은 아니다.
+
+| Metric | 계산과 의미 | selected 1.2k | 해석 |
+| --- | --- | ---: | --- |
+| reconstruction MSE | 모든 activation 원소의 `(x - x_hat)^2` 평균 | 10.2842 | raw activation scale에 의존하므로 단독 절대 기준보다 FVE와 함께 본다. |
+| L2 loss | row별 `||x - x_hat||_2` 평균 | 123.1901 | MSE와 달리 제곱 전 row norm이며 역시 scale-dependent다. |
+| FVE | batch별 `1 - Var(x-x_hat) / Var(x)`의 평균 | 0.987958 | source activation variance의 약 98.8%를 재구성했다. |
+| cosine similarity | row별 입력과 reconstruction 방향 cosine의 평균 | 0.997290 | residual vector 방향이 매우 잘 보존됐다. |
+| L2 ratio | row별 `||x_hat||_2 / ||x||_2` 평균 | 0.997136 | reconstruction 크기가 입력 크기와 거의 같다. |
+| relative reconstruction bias | `mean(||x_hat||^2) / mean(x·x_hat)` | 0.999883 | 1에 가까워 체계적인 scale bias가 작다. |
+| L0 | row마다 0이 아닌 SAE feature 수의 평균 | 63.979 | 목표 `k=64`와 일치해 inference sparsity가 정상 보정됐다. |
+| L1 loss | row별 feature activation L1 norm 평균 | 20,603.80 | feature magnitude의 scale-dependent 기준값이며 L0와 혼동하지 않는다. |
+| alive/dead | 전체 audit에서 한 번 이상 발화한 feature / 한 번도 발화하지 않은 feature | 1,284 / 252 | 83.6%가 사용돼 명백한 dictionary utilization collapse는 아니다. |
+| inference threshold | batch-independent inference에서 feature를 남기는 scalar cutoff | 19.956 | `-1` 초기값이 아니며 평균 L0를 64 부근으로 맞춘다. |
+| finite checks | input, encoded feature, reconstruction의 NaN/Inf 검사 | 모두 true | numerical failure가 없다. |
+
 `scripts/groot/audit_sae_checkpoint.py`는 별도 평가 공식을 구현하지 않는
 얇은 GR00T adapter다. PQ3 입력은 `load_layer_activations()`, checkpoint
 reload는 기존 `load_batch_topk_sae()`, L2/L0/FVE/cosine/alive 평가는
@@ -321,35 +349,51 @@ CUDA_VISIBLE_DEVICES=5 conda run -n event-sae-dev python \
 dictionary 대부분이 전혀 사용되지 않는 후보는 utilization collapse로
 거부했다.
 
-### 1.6 L15 production 학습
+### 1.6 L15 production 학습과 checkpoint 선택
 
-Pilot gate 통과 뒤 다음 최초 production 후보를 GPU 5에서 실행했다.
+1.2k와 10k는 같은 run의 중간/최종 checkpoint가 아니라 seed 0에서 각각 시작한
+독립 run이다. 같은 PQ3 L15 cache, `dict_size=1536`, `k=64`, `lr=1e-4`,
+batch 4,096를 사용했지만 총 steps에 따라 warmup과 decay schedule도 달랐다.
 
-```text
-dict_size    = 1536
-k            = 64
-lr           = 1e-4
-steps        = 10,000
-batch_size   = 4,096
-warmup_steps = 1,000
-seed         = 0
-```
+| 후보 run | optimizer steps | row presentations | dataset 사용량 | warmup | decay start |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1.2k short schedule | 1,200 | 4,915,200 | 약 6.38회 | 100 | 960 |
+| 10k long schedule | 10,000 | 40,960,000 | 약 53.15회 | 1,000 | 8,000 |
 
-실행 자체와 checkpoint 저장은 완료됐지만 최종 후보는 full-data utilization
-gate에서 거부했다.
+따라서 이 비교만으로 “동일 schedule을 오래 학습해서 collapse했다”고
+인과적으로 단정할 수 없다. 관측된 사실은 현재 10k schedule/run에서
+dictionary 사용이 소수 feature로 집중됐다는 것이다.
 
-| 후보 | FVE | cosine | L0 | dead / 1536 | 결정 |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 1.2k calibration, full rows | 0.987958 | 0.997290 | 63.979 | 252 (16.4%) | **선택** |
-| 10k final, full rows | 0.993197 | 0.998570 | 63.987 | 1303 (84.8%) | 거부 |
+| 후보 | MSE | FVE | cosine | L0 | alive / dead | 결정 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 1.2k short schedule, full rows | 10.2842 | 0.987958 | 0.997290 | 63.979 | 1284 / 252 | **선택** |
+| 10k long schedule, full rows | 5.8102 | 0.993197 | 0.998570 | 63.987 | 233 / 1303 | 거부 |
 
-10k 후보는 reconstruction은 더 좋지만 threshold를 쓰지 않는 training-style
-batch-top-k 진단에서도 100k rows 중 141개 feature만 사용했다. 따라서 문제는
-inference threshold calibration이 아니라 장기 최적화 중 dictionary 사용이
-소수 feature로 집중된 현상이다. Stage 1 범위를 hyperparameter sweep으로
-확장하지 않고 full-data audit를 통과한 1.2k early-stop checkpoint를 handoff
-산출물로 선택했다. 10k run은
-`logs/groot_n15/pq3_l15_production_10000/`에 rejection diagnostic으로 보존한다.
+10k 후보는 reconstruction 수치가 더 좋지만 threshold를 쓰지 않는
+training-style batch-top-k 진단에서도 100k rows 중 141개 feature만 사용했다.
+따라서 10k 후보의 낮은 utilization은 inference threshold만의 문제가 아니다.
+Stage 1 범위를 step/warmup/decay/AuxK sweep으로 확장하지 않고, full-data
+utilization까지 통과한 1.2k short-schedule checkpoint를 handoff로 선택했다.
+10k run은 `logs/groot_n15/pq3_l15_production_10000/`에 rejection
+diagnostic으로 보존한다.
+
+#### Stage 1 학습 판정
+
+| 판정 축 | 결과 | 판정 |
+| --- | --- | --- |
+| reconstruction | FVE 0.988, cosine 0.997, L2 ratio 0.997 | 통과 |
+| target sparsity | inference L0 63.979 ≈ k 64 | 통과 |
+| dictionary utilization | full-data alive 83.6%, dead 16.4% | 명백한 collapse 없음 |
+| numerical/runtime | finite checks, checkpoint/config reload, 전체 audit 성공 | 통과 |
+| held-out 일반화 | train과 동일 source 분포만 평가 | 미검증 |
+| event semantics | event alignment/intervention 미수행 | 미검증 |
+
+결론적으로 selected 1.2k checkpoint는 **현재 Stage 1 범위에서는 잘
+학습됐다**. Activation reconstruction, 목표 sparsity, dictionary utilization,
+수치 안정성과 재로딩 조건을 모두 만족한다. 다만 이 판정은 feature가 의미
+있거나 다른 RoboCasa task에 일반화한다는 뜻은 아니다. 반대로 10k checkpoint는
+reconstruction SAE로는 강하지만 feature 해석용 handoff로는 utilization gate를
+통과하지 못했다.
 
 ## 6. 산출물 계약
 
@@ -366,7 +410,7 @@ logs/groot_n15/pq3_l15_stage1_selected/
     └── config.json
 ```
 
-`selection.json`은 1.2k early-stop 선택 근거와 10k 후보의 rejection 지표를
+`selection.json`은 1.2k short-schedule 선택 근거와 10k 후보의 rejection 지표를
 함께 기록한다.
 
 `groot_source_manifest.json`에는 최소한 다음 provenance를 기록한다.
