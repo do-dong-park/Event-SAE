@@ -1,476 +1,452 @@
-# GR00T Event-Grounded SAE 재현 계획 — 1/6: L15 SAE 학습
+# GR00T Event-Grounded SAE Stage 1 — 최종 보고서
 
-**문서 상태:** **Stage 1 완료** — full-data audit를 통과한 L15 1.2k short-schedule checkpoint 선택
-**작성일:** 2026-07-21
-**현재 과정:** 전체 6단계 중 **1단계**
-**원 논문 파이프라인 대응:** Phase 1의 step (a) activation collection과
-step (b) SAE training 완료
+- 작성일: 2026-07-21
+- 코드 revision: `878e77054f792f0706d69ea58478c2ba015b5e71`
+- 대상: GR00T N1.5, RoboCasa PQ3, DiT physical layer 15
+- 상태: **repo-scope offline Stage 1 완료**
+- Provisional handoff: `logs/groot_n15/pq3_l15_stage1_selected/trainer_0/ae.pt`
 
-> 빠른 결과 확인은
-> [Stage 1 결과 요약](groot_event_grounded_sae_stage1_summary.md)을 먼저 본다.
+이 문서는 Stage 1의 목적, 데이터 계약, 학습 조건, 재현 절차와 실험 결과를
+한곳에 기록한다. Stage 1은 SAE의 offline 품질까지만 확정하며, policy 행동 보존과
+feature의 event 의미·인과성은 후속 검증 대상으로 남긴다.
 
-## Index
+## 0. Stage 1 결과 요약
 
-- [1. 전체 목표와 현재 위치](#1-전체-목표와-현재-위치)
-- [2. Stage 0 전제조건: 이미 확보된 데이터](#2-stage-0-전제조건-이미-확보된-데이터)
-- [3. Stage 1의 목표](#3-stage-1의-목표)
-  - [L15 선택의 의미](#l15-선택의-의미)
-- [4. 고정할 SAE dataset identity](#4-고정할-sae-dataset-identity)
-- [5. 세부 실행 순서](#5-세부-실행-순서)
-  - [1.1 Source audit와 계약 동결](#11-source-audit와-계약-동결)
-  - [1.2 PQ3 token-wise loader 개정](#12-pq3-token-wise-loader-개정)
-  - [1.3 기존 smoke의 지위](#13-기존-smoke의-지위)
-  - [1.4 L15 calibration pilot](#14-l15-calibration-pilot)
-  - [1.5 Checkpoint 품질 audit](#15-checkpoint-품질-audit)
-  - [1.6 L15 production 학습](#16-l15-production-학습)
-- [6. 산출물 계약](#6-산출물-계약)
-- [7. 완료 gate](#7-완료-gate)
-- [8. 다음 단계로의 handoff](#8-다음-단계로의-handoff)
+12,041개 policy records에서 GR00T L15의 4개 denoise step과 16개 action token을
+각각 독립 sample로 사용해 770,624개 activation row를 구성했다. 같은 데이터로
+BatchTopK SAE를 1.2k, 4k, 10k, 20k optimizer step 동안 각각 독립 학습했다.
 
-## 1. 전체 목표와 현재 위치
+| Run | Dataset passes | MSE ↓ | FVE ↑ | 평균 L0 | Alive feature |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1.2k | 6.38 | 10.2842 | 0.987958 | 63.979 | 1,284 / 1,536 (83.59%) |
+| 4k | 21.26 | 7.3981 | 0.991338 | 63.908 | 262 / 1,536 (17.06%) |
+| 10k | 53.15 | 5.8102 | 0.993197 | 63.987 | 233 / 1,536 (15.17%) |
+| 20k | 106.30 | 5.3015 | 0.993793 | 63.997 | 192 / 1,536 (12.50%) |
 
-최종 목표는 Event-Grounded Sparse Autoencoder 방법을 GR00T N1.5와
-RoboCasa rollout에 적용해 재현하는 것이다. 여기서 재현은 원 논문의 특정
-수치를 그대로 복제한다는 뜻이 아니라, 다음 방법론적 연결을 GR00T에서
-끝까지 구성하고 검증한다는 뜻이다.
+`MSE`는 reconstruction 오차, `FVE`는 입력 분산 중 reconstruction이 설명한 비율,
+`L0`는 activation row 하나에서 0이 아닌 SAE code 수다. `Alive feature`는
+전체 audit에서 한 번이라도 발화한 dictionary feature 수다. 정확한 계산식과
+해석은 5절에 정의한다.
 
-```text
-closed-loop activation
-        -> sparse SAE feature
-        -> SAE와 독립적으로 만든 event cluster
-        -> event-cluster × SAE-feature temporal score
-        -> 선택 feature의 closed-loop causal intervention
-```
+학습량이 늘수록 reconstruction은 일관되게 개선되었지만, 사용되는 dictionary
+feature 수는 감소했다. 현재는 후속 event-feature 탐색에 넓은 후보군을 제공하는
+1.2k를 **provisional handoff**로 유지하고, 4k/10k/20k를 reconstruction이 더 좋은
+비교 checkpoint로 보존한다. 어느 checkpoint가 policy 행동을 가장 잘 보존하는지는
+reconstruction-only closed-loop 평가 전에는 결정할 수 없다.
 
-전체 작업을 실행 단위 기준으로 다음 6단계로 나눈다.
+## 1. 전체 목표 중 어떤 단계인가?
 
-|     전체 순서 | 과정                                         | 원 파이프라인 대응 | 핵심 산출물                                |
-| ------------: | -------------------------------------------- | ------------------ | ------------------------------------------ |
-| **1/6** | **GR00T DiT L15 SAE 학습과 품질 검증** | Phase 1, (a)–(b)  | 검증된 L15 SAE checkpoint                  |
-|           2/6 | Kinematic keyframe 추출                      | Phase 2, (c)       | episode별 AWE waypoint                     |
-|           3/6 | Keyframe media와 event descriptor 생성       | Phase 3, (d)–(e)  | frame bundle, vision/state descriptor      |
-|           4/6 | Event clustering과 VLM annotation            | Phase 3, (f)–(g)  | task-local labeled event cluster           |
-|           5/6 | Event-feature scoring과 feature ranking      | bridge, (h)–(j)   | cluster × SAE feature score, 후보 feature |
-|           6/6 | Closed-loop intervention                     | Phase 4, (k)       | feature별 SR 변화와 인과 검증              |
+전체 연구는 다음 질문을 순서대로 다룬다.
 
-이 문서는 **1/6만** 다룬다. Keyframe, SigLIP, VLM annotation, event
-clustering, feature ranking, intervention은 현재 단계의 범위가 아니다.
+| 단계 | 핵심 질문 | 산출물 |
+| ---: | --- | --- |
+| **1/6** | **VLA residual을 sparse하게 재구성할 수 있는가?** | **SAE checkpoint와 품질 audit** |
+| 2/6 | 행동 궤적의 중요한 시점은 어디인가? | AWE waypoint |
+| 3/6 | 각 시점을 어떻게 표현할 것인가? | vision/state descriptor |
+| 4/6 | 반복되는 event 유형은 무엇인가? | annotated event cluster |
+| 5/6 | 어떤 SAE feature가 event와 정렬되는가? | feature ranking |
+| 6/6 | 선택 feature가 행동에 영향을 주는가? | closed-loop ΔSR |
 
-## 2. Stage 0 전제조건: 이미 확보된 데이터
+Stage 1의 판정 축은 둘로 나뉜다.
 
-Activation collection은 새로 수행하지 않는다. SAE 학습의 **유일한 원천은
-PQ3 full-token rollout**로 고정한다. Raw activation은 승준 서버의 HDD에
-read-only로 두고, 로컬 workspace/NVMe로 복제하지 않는다.
+1. **Offline fidelity:** reconstruction, sparsity, feature usage와 numerical integrity
+2. **Behavioral fidelity:** 원 activation 대신 `Dec(Enc(x))`를 주입해도 policy의
+   success rate가 유지되는지
+
+현재 완료 범위는 첫 번째 축이다. 따라서 “SAE가 source activation을 잘 근사한다”는
+결론은 가능하지만, “원 policy 행동을 보존한다”거나 “feature가 특정 event를
+나타낸다”는 결론은 아직 내리지 않는다.
+
+## 2. 데이터셋 구성
+
+### 2.1 Source inventory
+
+원격 source-of-truth:
 
 ```text
 /home/kimseungjun/datasets/temporal_vla_outputs/eval/robocasa/groot_n15/
   phase_event_pq3/raw_rollouts/
 ```
 
-2026-07-21 원격 원본에서 확인한 입력 계약은 다음과 같다.
+| RoboCasa task | Instruction cell | PKL |
+| --- | --- | ---: |
+| `OpenDrawer` | `pq3_drawer_left` | 30 |
+| `OpenDrawer` | `pq3_drawer_right` | 30 |
+| `PickPlaceCounterToCabinet` | `pq3_ppcc_beer` | 30 |
+| `PickPlaceCounterToCabinet` | `pq3_ppcc_bread` | 30 |
+| `PickPlaceCounterToCabinet` | `pq3_ppcc_pizza_cutter` | 30 |
+| **합계** | **5 cells** | **150** |
 
-| 항목                    | 확인값                                                            |
-| ----------------------- | ----------------------------------------------------------------- |
-| rollout PKL             | 150 episodes = 5 instruction cells × 30                           |
-| record별 DiT activation | `[L=7, K=4, T=49, D=1536]`, fp16                                  |
-| capture layer ID        | `[0, 2, 4, 8, 10, 12, 15]`                                        |
-| denoise step            | `0, 1, 2, 3`                                                       |
-| source model token      | 49개 = state 1 + future 32 + action 16, 평균 없이 전부 보존        |
-| feature kind            | `groot_n15_dit_block_residual_full_tokens_denoise`                |
-| feature axes            | `layer, denoise_step, model_token, feature_dim`                   |
-| capture token mode      | `all_token_full`                                                   |
-| 부가 정렬 정보          | `states`, `feature_phases`, `action_vectors`, task/scene/success metadata |
+150개 PKL에는 12,041개 activation record가 있다. 이는 2개 task family와
+5개 instruction/scene cell에 대한 데이터이며 RoboCasa 전체 분포를 대표하지 않는다.
 
-`all_token_full`은 **원본 capture 계약**이다. SAE가 49개 token을 전부 학습한다는
-뜻이 아니다. OpenPI π0.5 action-expert 경로에 대응하도록 Stage 1 SAE는 이
-tensor에서 마지막 `model_action_horizon=16` action token만 선택해 사용한다.
-state 1개와 future 32개는 source와 provenance에는 보존하지만 SAE 학습 row에는
-넣지 않는다.
+### 2.2 Activation 계약
 
-고정된 5개 cell은 다음과 같다.
+각 record의 activation tensor는 다음 계약을 갖는다.
 
-| RoboCasa task               | cell                    | PKL |
-| --------------------------- | ----------------------- | --: |
-| `OpenDrawer`                | `pq3_drawer_left`       |  30 |
-| `OpenDrawer`                | `pq3_drawer_right`      |  30 |
-| `PickPlaceCounterToCabinet` | `pq3_ppcc_bread`        |  30 |
-| `PickPlaceCounterToCabinet` | `pq3_ppcc_beer`         |  30 |
-| `PickPlaceCounterToCabinet` | `pq3_ppcc_pizza_cutter` |  30 |
+| 속성 | 값 |
+| --- | --- |
+| Record shape | `[L=7, K=4, T=49, D=1536]`, fp16 |
+| Physical layers | `[0, 2, 4, 8, 10, 12, 15]` |
+| Token layout | state 1 + future 32 + action 16 |
+| 선택 범위 | physical L15, action token `[33,49)` |
+| SAE 입력 cache | `[770624,1536]`, fp16 |
 
-`phase_event_6p`의 `[L=7,K=4,D=1536]` activation은 마지막 16개 action
-token을 이미 평균한 PQ2 자료다. Token-wise SAE의 원천으로 사용하거나 PQ3와
-혼합하지 않는다. `steer_eval_pq2`에는 평가 TSV/JSON만 남아 있고 activation은
-없으므로 역시 입력 경로가 아니다.
+`L`은 저장된 layer 수, `K`는 denoise step 수, `T`는 model token 수,
+`D`는 residual dimension이다. `[33,49)`는 token index 33 이상 49 미만,
+즉 마지막 16개 action token을 뜻한다.
 
-PKL은 Python code execution이 가능한 형식이므로, 이 프로젝트에서 생성하고
-위 경로로 provenance가 고정된 archive에만 `--trust-pkl`을 사용한다. Source
-PKL은 수정하거나 재저장하지 않는다.
+### 2.3 SAE row 구성
 
-위 절대 경로는 원격 서버에서만 유효하다. 원격에는 의존성이 없는 standalone
-exporter 한 파일만 Git bundle로 전달했다. Exporter가 PKL을 하나씩 audit하고
-L15 action-token fp16 shard만 만들었으며, raw PKL은 전송하거나 수정하지 않았다.
-검증된 shard 150개(2.3 GiB)만 로컬로 회수해 단일 activation cache로 병합했고,
-SAE 학습과 checkpoint audit는 로컬 GPU 5에서 수행했다.
-
-## 3. Stage 1의 목표
-
-GR00T N1.5 DiT **physical layer 15 residual stream**을 재구성하면서도 sparse한
-BatchTopK SAE를 학습하고, 이후 event-feature scoring과 closed-loop hook에서
-재사용할 수 있는 checkpoint를 만든다.
-
-완료 상태는 단순히 `ae.pt`가 생성된 상태가 아니다. 다음 세 조건을 모두
-만족해야 한다.
-
-1. SAE 입력 activation 계약이 manifest에 기록돼 있다.
-2. 학습이 끝나고 checkpoint를 다시 load할 수 있다.
-3. reconstruction과 sparsity 기본 진단에서 numerical failure나 명백한
-   collapse가 없다.
-
-검증 범위는 이 repository의 OpenVLA/OpenPI SAE 학습 pipeline과 같은 수준으로
-제한한다. Stage 1은 학습 가능한 activation과 후속 단계에서 load 가능한
-checkpoint를 확인하는 단계다. Temporal metadata join, reconstruction hook,
-held-out 일반화와 feature 의미 검증은 각각 실제로 사용하는 후속 단계에서
-다룬다.
-
-### L15 선택의 의미
-
-L15는 16-block DiT에서 마지막으로 capture한 physical block이다. 최종 action
-prediction에 가까운 motor-proximal residual stream을 우선 분석한다는
-architectural prior와 연구자 선택에 따라 primary layer로 사전 고정한다.
-
-이 선택은 “L15가 다른 layer보다 우수하다는 실험 결과”를 뜻하지 않는다.
-현재 L15의 Event-Grounded SAE 성능 비교는 아직 수행되지 않았다. 본 재현의
-primary checkpoint를 L15로 고정하고, layer ablation이 필요할 때만 별도
-계획에서 L8 등과 비교한다.
-
-코드는 L15가 tensor의 마지막 slot이라고 추정하면 안 된다. 반드시
-`capture_layers.index(15)`로 physical layer ID를 array position으로 변환한다.
-
-## 4. 고정할 SAE dataset identity
-
-이번 checkpoint의 identity는 다음 조합 전체다.
+한 record에서 선택되는 row는 다음과 같다.
 
 ```text
-model             = GR00T N1.5
-benchmark         = RoboCasa
-dataset scope     = phase_event_pq3 / 5 instruction cells / 150 rollouts
-pathway           = DiT block residual, action-token slice from full-token capture
-physical layer    = 15
-denoise policy    = all: K=4 states를 각각 독립 row로 사용
-token policy      = action-only: 마지막 A=16 token을 각각 독립 row로 사용
-activation dim    = 1536
-dictionary size   = 1536 (1× expansion)
-BatchTopK k       = 64
+[L=7, K=4, T=49, D=1536]
+→ physical L15 선택
+→ action token [33,49) 선택
+→ [K=4, A=16, D=1536]
+→ pooling 없이 K와 A를 sample 축으로 flatten
+→ [64, D=1536]
 ```
 
-현재 source는 RoboCasa 전체 task 분포가 아니라 위 5개 instruction cell이다.
-따라서 산출물을 “RoboCasa-general SAE”라고 부르지 않는다.
-
-선택한 L15의 원본은 `[N,K=4,T=49,D=1536]`이다. Source metadata로
-`T = state 1 + future 32 + action 16` 계약을 확인한 뒤 마지막 16개 action
-token만 잘라 `[N,K=4,A=16,D=1536]`으로 만든다. K축과 A축은 평균하지 않고
-`[N×4×16,1536]`으로 펼치며, 각 denoise-action-token residual vector가 SAE의
-한 학습 row다. Manifest에는 source file 순서와 row flatten 순서를 기록한다.
-
-49개 전체를 공유 SAE 하나에 넣는 실험은 Stage 1 primary 계약이 아니다.
-필요하면 별도 checkpoint와 명시적인 ablation으로만 수행한다.
-
-## 5. 세부 실행 순서
-
-### 1.1 Source audit와 계약 동결
-
-전체 PKL을 읽어 다음을 검증한다.
-
-- file, record, activation-row 수와 5개 cell별 file inventory
-- `feature_kind`, `feature_axes`, `capture_layers`
-- `capture_token_mode == all_token_full`
-- 모든 `hidden_states[t]`의 `[7, 4, 49, 1536]` shape
-- `model_action_horizon == 16`과 token layout `1 + 32 + 16 == 49`
-- SAE 입력 slice가 absolute model-token index `33..48`인지 여부
-- 선택한 L15 action-token activation의 NaN/Inf 부재
-- source activation dtype의 일관성
-- 선택 layer가 physical L15인지 여부
-- source file 목록과 file별 record/row 범위
-
-전체 audit와 bounded export는 `scripts/groot/export_pq3_activation_shards.py`를
-standalone으로 원격에서 실행했다. 원격 접속과 전송에는 temporal_vla의
-`scripts/utils/remote_compute.sh`만 사용했다.
-
-```bash
-# 원격: PKL 하나씩 검증하고 L15 action-token shard 생성
-python export_pq3_activation_shards.py export \
-  --input-dir /home/kimseungjun/datasets/temporal_vla_outputs/eval/robocasa/groot_n15/phase_event_pq3/raw_rollouts \
-  --output-dir pq3_l15_action_shards \
-  --trust-pkl --layer 15
-
-# 로컬: 전송된 150개 shard를 검증하며 단일 cache로 병합
-conda run -n event-sae-dev python scripts/groot/export_pq3_activation_shards.py merge \
-  --shard-dir /home/dongkyu/pkt_ws/temporal_vla/outputs/event_sae_stage1/pq3_l15_action_shards \
-  --output-cache logs/groot_n15/pq3_l15_activation_cache/l15_action_tokens.pt
-```
-
-이 audit은 의도적으로 SAE 입력 activation 계약만 검사한다. `states`,
-`feature_phases`, `action_vectors`의 temporal join은 Stage 2와 Stage 5에서 해당
-metadata를 실제로 사용할 때 검증하며, Stage 1 완료 조건에는 포함하지 않는다.
-
-### 1.2 PQ3 token-wise loader 구현
-
-기존 `scripts/groot/train_sae_robocasa.py`는 아래 PQ2 pooled 계약을 사용했다.
+여기서 `A`는 선택한 action token 수다. 총 unique row 수 `N`은
 
 ```text
-feature_axes = [layer, denoise_step, feature_dim]
-hidden shape = [L, K, D]
-rows         = [record × K, D]
+N = records × denoise steps × action tokens
+  = 12,041 × 4 × 16
+  = 770,624
 ```
 
-현재 loader는 다음 PQ3 계약을 구현하고 합성 test로 고정한다.
+이다. 각 row는 하나의 `(policy record, denoise step, action-token offset)`에
+대응한다. State/future token, 다른 physical layer와 PQ2 pooled activation은
+포함하지 않는다.
 
-- exact `feature_kind`, `feature_axes`, `capture_token_mode`,
-  `capture_layers=[0,2,4,8,10,12,15]` 검증
-- physical layer ID를 `capture_layers.index(layer_id)`로 선택
-- `model_action_horizon=16`을 metadata에서 검증하고 `T=49`의 마지막 16개만 선택
-- 선택 layer의 `[K,A=16,D]`를 pooling 없이 `[K×A,D]` row로 변환
-- `source_files`, file별 record/row 범위와 flatten `row_order`를 manifest에 기록
-- 기본 전체 실행에서 5개 cell별 30개와 전체 150개 file inventory를 엄격히 검증
-- `--max-files` 또는 `--allow-partial-inventory`를 준 경우에만 부분집합 허용
-- PQ2 pooled activation, 서로 다른 token count/dtype, state/future token 혼입 거부
-- 전체 record 수와 `records×4×16` 학습 row 수를 audit manifest에 기록
-- resident activation은 source fp16으로 유지하고 현재 학습 batch만 float32로 변환
-- 선택 activation materialization 예상 peak가 `--max-ram-gib`를 넘으면 학습 전 실패
+이 구성은 action expert residual을 denoise forward와 token offset별로 분석한다는
+점에서 Event-Grounded SAE의 per-token 관점과 정렬된다. 다만 `K=4`와 `A=16`은
+GR00T PQ3의 고유 계약이며 모든 VLA에 공통인 논문 상수는 아니다.
 
-합성 contract/CLI/cache round-trip test 9개와 실제 원격 150개 PKL 전체 audit가
-통과했다. 실제 inventory는 12,041 records, 770,624 action-token rows,
-`[770624,1536]` fp16, 선택 activation 2,367,356,928 bytes다. Reconstruction
-hook에서 full residual을 교체하는 동작은 Stage 6 intervention 구현과 함께
-검증한다.
-
-### 1.3 기존 smoke의 지위
-
-7개 capture layer 모두에서 100-step plumbing smoke가 완료돼 있다. L15 smoke
-checkpoint는 다음 위치에 있다.
+Raw PKL은 원격에 유지하고 standalone exporter로 만든 activation shard만 로컬로
+전송한다. 로컬 학습 cache는 다음 경로에 있다.
 
 ```text
-logs/groot_n15/ppcs_apple_all_layers_smoke/layer_15/trainer_0/ae.pt
+logs/groot_n15/pq3_l15_activation_cache/l15_action_tokens.pt
 ```
 
-이 checkpoint는 **PQ2 pooled loader 기준으로** scheduler, training loop와
-저장 경로가 동작했다는 제한된 증거다. PQ3 `[L,K,T,D]` loader 검증이나
-token-wise SAE 품질의 증거가 아니며, production SAE나 feature 해석에
-사용하지 않는다.
+## 3. SAE 학습 조건
 
-실제 PQ3 cache로 수행한 별도 smoke는
-`logs/groot_n15/pq3_l15_smoke_100/`에 저장했다. 100-step 학습, final
-`ae.pt/config.json` 생성, 새 process reload와 8,192-row audit가 모두
-통과했다. Training FVE는 step 90에서 0.647이었다. 이 run은 upstream
-`threshold_start_step=1000` 이전이라 inference threshold가 `-1`인 plumbing
-smoke이며, sparsity 품질 checkpoint로는 사용하지 않는다.
+### 3.1 Model과 objective
 
-### 1.4 L15 calibration pilot
+입력 residual `x ∈ R^1536`에 대해 BatchTopK SAE는
 
-BatchTopK의 inference threshold는 기본값 `-1`이고 upstream trainer에서
-`step > 1000`일 때부터 갱신된다. 정확히 1,000 steps로는 inference sparsity를
-검증할 수 없으므로 pilot을 1,200 optimizer steps로 실행해 199회의 threshold
-update를 포함했다. 여기서 1.2k는 파일이나 episode 수가 아니라 parameter update
-수다. Batch 4,096 기준 4,915,200 row presentations이며, 770,624-row dataset을
-약 6.38회 사용한 양이다. `InMemoryBatchLoader`는 shuffle마다 완전한 batch
-188개(770,048 rows)를 사용하고 나머지 576개를 무작위로 제외하지만, 매 epoch
-다시 shuffle하므로 두 run 모두 770,624개 unique row를 실질적으로 반복 학습한다.
-770,624 optimizer steps가 필요한 것은 batch size가 1일 때뿐이다.
-
-```bash
-CUDA_VISIBLE_DEVICES=5 conda run -n event-sae-dev python \
-  scripts/groot/train_sae_robocasa.py \
-  --activation-cache logs/groot_n15/pq3_l15_activation_cache/l15_action_tokens.pt \
-  --save-dir logs/groot_n15/pq3_l15_pilot_1200 \
-  --layer 15 --dict-size 1536 --sae-k 64 --lr 1e-4 \
-  --steps 1200 --batch-size 4096 --warmup-steps 100 \
-  --save-every 600 --log-steps 100 --device cuda:0
+```text
+u     = W_enc x + b_enc
+z     = BatchTopK_k(u)
+x_hat = W_dec z + b_dec
+L     = MSE(x, x_hat) + λ_aux L_aux
 ```
 
-저장 threshold는 19.956이었고 full-data audit에서 FVE 0.987958, cosine
-0.997290, L0 63.979, dead 252/1536(16.4%)이었다. 이 단계는 동일 source
-분포의 calibration이며 held-out 성능을 뜻하지 않는다.
+로 계산한다. `z`는 sparse code, `x_hat`은 reconstruction이다. BatchTopK는
+학습 batch 전체에서 평균적으로 row당 `k`개 feature를 남긴다. `L_aux`는 주
+reconstruction에 선택되지 않은 feature의 학습을 보조하는 auxiliary loss다.
 
-### 1.5 Checkpoint 품질 audit
+모든 run의 공통 조건은 다음과 같다.
 
-각 checkpoint 후보를 새 process에서 reload하고 동일한 source의 결정론적
-row 순열에 대해 다음 값을 계산한다.
+| 항목 | 값 |
+| --- | --- |
+| Activation dimension | 1,536 |
+| Dictionary size | 1,536 |
+| Expansion ratio | 1.0 |
+| Active budget `k` | 64 |
+| Learning rate | `1e-4` |
+| Batch size | 4,096 rows |
+| Optimizer seed | 0 |
+| Training dtype | float32 |
+| Activation normalization | 사용 |
 
-- reconstruction MSE
-- fraction of variance explained
-- input/reconstruction cosine similarity
-- 평균 L0
-- feature별 firing frequency
-- dead feature 수와 비율
-- feature activation magnitude
-- encode/decode NaN/Inf
+Dictionary size는 SAE feature 수다. Expansion ratio는
+`dictionary size / activation dimension`이며, `k=64`는 row당 평균 active
+feature 예산이다. 따라서 목표 sparsity 비율은
 
-#### Metric 정의와 selected checkpoint 해석
-
-모든 값은 train과 동일한 PQ3 source 분포의 770,560 complete-batch rows에서
-계산했다. 따라서 reconstruction과 sparsity 상태를 판정하는 값이지 held-out
-일반화나 feature 의미를 측정하는 값은 아니다.
-
-| Metric | 계산과 의미 | selected 1.2k | 해석 |
-| --- | --- | ---: | --- |
-| reconstruction MSE | 모든 activation 원소의 `(x - x_hat)^2` 평균 | 10.2842 | raw activation scale에 의존하므로 단독 절대 기준보다 FVE와 함께 본다. |
-| L2 loss | row별 `||x - x_hat||_2` 평균 | 123.1901 | MSE와 달리 제곱 전 row norm이며 역시 scale-dependent다. |
-| FVE | batch별 `1 - Var(x-x_hat) / Var(x)`의 평균 | 0.987958 | source activation variance의 약 98.8%를 재구성했다. |
-| cosine similarity | row별 입력과 reconstruction 방향 cosine의 평균 | 0.997290 | residual vector 방향이 매우 잘 보존됐다. |
-| L2 ratio | row별 `||x_hat||_2 / ||x||_2` 평균 | 0.997136 | reconstruction 크기가 입력 크기와 거의 같다. |
-| relative reconstruction bias | `mean(||x_hat||^2) / mean(x·x_hat)` | 0.999883 | 1에 가까워 체계적인 scale bias가 작다. |
-| L0 | row마다 0이 아닌 SAE feature 수의 평균 | 63.979 | 목표 `k=64`와 일치해 inference sparsity가 정상 보정됐다. |
-| L1 loss | row별 feature activation L1 norm 평균 | 20,603.80 | feature magnitude의 scale-dependent 기준값이며 L0와 혼동하지 않는다. |
-| alive/dead | 전체 audit에서 한 번 이상 발화한 feature / 한 번도 발화하지 않은 feature | 1,284 / 252 | 83.6%가 사용돼 명백한 dictionary utilization collapse는 아니다. |
-| inference threshold | batch-independent inference에서 feature를 남기는 scalar cutoff | 19.956 | `-1` 초기값이 아니며 평균 L0를 64 부근으로 맞춘다. |
-| finite checks | input, encoded feature, reconstruction의 NaN/Inf 검사 | 모두 true | numerical failure가 없다. |
-
-`scripts/groot/audit_sae_checkpoint.py`는 별도 평가 공식을 구현하지 않는
-얇은 GR00T adapter다. PQ3 입력은 `load_layer_activations()`, checkpoint
-reload는 기존 `load_batch_topk_sae()`, L2/L0/FVE/cosine/alive 평가는
-`dictionary_learning.evaluation.evaluate()`를 그대로 재사용한다. GR00T
-전용 추가 로직은 source/checkpoint identity 검증, deterministic row sample,
-feature별 firing 통계와 JSON/NPZ 저장뿐이다.
-
-```bash
-CUDA_VISIBLE_DEVICES=5 conda run -n event-sae-dev python \
-  scripts/groot/audit_sae_checkpoint.py \
-  --activation-cache logs/groot_n15/pq3_l15_activation_cache/l15_action_tokens.pt \
-  --sae-checkpoint logs/groot_n15/pq3_l15_stage1_selected/trainer_0/ae.pt \
-  --batch-size 512 --max-audit-rows 0 --device cuda:0
+```text
+k / dictionary size = 64 / 1,536 = 0.04167 = 4.17%
 ```
 
-기본 출력은 checkpoint run root의 `sae_quality.json`과
-`sae_quality_by_feature.npz`다. 8,192-row 표본은 희소 firing feature를 많이
-놓쳐 pilot dead 수를 1,392개로 과대평가했다. 따라서 최종 checkpoint 선택에는
-전체 complete batch인 770,560 rows를 사용했다. Stage 1의 audit은 동일 source
-분포이므로 이를 “held-out 성능”이나 layer 일반화 증거라고 부르지 않는다.
-별도의 reconstruction 수치 threshold는 사전 등록하지 않았지만, full-data에서
-dictionary 대부분이 전혀 사용되지 않는 후보는 utilization collapse로
-거부했다.
+이다.
 
-### 1.6 L15 production 학습과 checkpoint 선택
+### 3.2 네 학습 schedule
 
-1.2k와 10k는 같은 run의 중간/최종 checkpoint가 아니라 seed 0에서 각각 시작한
-독립 run이다. 같은 PQ3 L15 cache, `dict_size=1536`, `k=64`, `lr=1e-4`,
-batch 4,096를 사용했지만 총 steps에 따라 warmup과 decay schedule도 달랐다.
-
-| 후보 run | optimizer steps | row presentations | dataset 사용량 | warmup | decay start |
+| Run | Steps | Warmup | Decay start | Row presentations | Dataset passes |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1.2k short schedule | 1,200 | 4,915,200 | 약 6.38회 | 100 | 960 |
-| 10k long schedule | 10,000 | 40,960,000 | 약 53.15회 | 1,000 | 8,000 |
+| 1.2k | 1,200 | 100 | 960 | 4,915,200 | 6.38 |
+| 4k | 4,000 | 1,000 | 3,200 | 16,384,000 | 21.26 |
+| 10k | 10,000 | 1,000 | 8,000 | 40,960,000 | 53.15 |
+| 20k | 20,000 | 1,000 | 16,000 | 81,920,000 | 106.30 |
 
-따라서 이 비교만으로 “동일 schedule을 오래 학습해서 collapse했다”고
-인과적으로 단정할 수 없다. 관측된 사실은 현재 10k schedule/run에서
-dictionary 사용이 소수 feature로 집중됐다는 것이다.
-
-| 후보 | MSE | FVE | cosine | L0 | alive / dead | 결정 |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 1.2k short schedule, full rows | 10.2842 | 0.987958 | 0.997290 | 63.979 | 1284 / 252 | **선택** |
-| 10k long schedule, full rows | 5.8102 | 0.993197 | 0.998570 | 63.987 | 233 / 1303 | 거부 |
-
-10k 후보는 reconstruction 수치가 더 좋지만 threshold를 쓰지 않는
-training-style batch-top-k 진단에서도 100k rows 중 141개 feature만 사용했다.
-따라서 10k 후보의 낮은 utilization은 inference threshold만의 문제가 아니다.
-Stage 1 범위를 step/warmup/decay/AuxK sweep으로 확장하지 않고, full-data
-utilization까지 통과한 1.2k short-schedule checkpoint를 handoff로 선택했다.
-10k run은 `logs/groot_n15/pq3_l15_production_10000/`에 rejection
-diagnostic으로 보존한다.
-
-#### Stage 1 학습 판정
-
-| 판정 축 | 결과 | 판정 |
-| --- | --- | --- |
-| reconstruction | FVE 0.988, cosine 0.997, L2 ratio 0.997 | 통과 |
-| target sparsity | inference L0 63.979 ≈ k 64 | 통과 |
-| dictionary utilization | full-data alive 83.6%, dead 16.4% | 명백한 collapse 없음 |
-| numerical/runtime | finite checks, checkpoint/config reload, 전체 audit 성공 | 통과 |
-| held-out 일반화 | train과 동일 source 분포만 평가 | 미검증 |
-| event semantics | event alignment/intervention 미수행 | 미검증 |
-
-결론적으로 selected 1.2k checkpoint는 **현재 Stage 1 범위에서는 잘
-학습됐다**. Activation reconstruction, 목표 sparsity, dictionary utilization,
-수치 안정성과 재로딩 조건을 모두 만족한다. 다만 이 판정은 feature가 의미
-있거나 다른 RoboCasa task에 일반화한다는 뜻은 아니다. 반대로 10k checkpoint는
-reconstruction SAE로는 강하지만 feature 해석용 handoff로는 utilization gate를
-통과하지 못했다.
-
-## 6. 산출물 계약
-
-선택된 canonical handoff는 다음 위치에 고정했다.
+`Row presentations`는 optimizer가 본 row의 누적 횟수이며 unique row 수와 다르다.
 
 ```text
-logs/groot_n15/pq3_l15_stage1_selected/
-├── groot_source_manifest.json
-├── sae_quality.json
-├── sae_quality_by_feature.npz
-├── selection.json
-└── trainer_0/
-    ├── ae.pt
-    └── config.json
+row presentations = batch size × optimizer steps
+dataset passes      = row presentations / 770,624
 ```
 
-`selection.json`은 1.2k short-schedule 선택 근거와 10k 후보의 rejection 지표를
-함께 기록한다.
+예를 들어 20k run은 `4,096 × 20,000 = 81,920,000`회 row를 제시했고,
+`81,920,000 / 770,624 = 106.30` dataset passes에 해당한다. Loader는 pass마다
+shuffle하므로 모든 run이 770,624개 unique row를 반복 사용한다.
 
-`groot_source_manifest.json`에는 최소한 다음 provenance를 기록한다.
+네 run은 서로 독립적이다. 특히 1.2k는 warmup도 짧으므로 네 행의 차이를
+optimizer step 하나의 인과 효과로 해석할 수는 없다.
 
-- source root와 source file inventory
-- feature kind/axes와 capture layer IDs
-- selected physical layer 15
-- source capture token mode와 source token 수
-- SAE token scope, action horizon과 absolute slice
-- denoise policy와 denoise-step 수
-- record와 activation-row 수
-- activation dimension과 source/resident dtype
-- materialization 예상 memory
+### 3.3 논문 조건과의 관계
 
-Dictionary size, k, learning rate, step 수 등 trainer 설정은
-`trainer_0/config.json`을 기준으로 한다. Publication용 source hash나 두
-repository의 revision bundle은 Stage 1 학습 검증의 필수 산출물로 두지 않는다.
+Event-Grounded SAE는 OpenVLA에 4k step, PaliGemma/action-expert stream에
+10k step을 사용하지만 batch size는 40,000이다. 따라서 optimizer step 수보다
+`batch × steps`로 계산한 row presentations가 학습량 비교에 더 적절하다.
+해당 논문은 suite당 약 10 tasks × task당 50 rollouts를 사용하지만 unique
+activation row 수는 공개하지 않아 우리 데이터와 정확한 선형 환산은 불가능하다.
 
-로컬 `pq3_l15_activation_cache/l15_action_tokens.pt`와 전송 shard는 학습
-재현을 위한 derived intermediary다. Stage 2/5 handoff의 기준 산출물은 위
-selected checkpoint/config/source manifest/quality/selection 파일이며 raw PKL은
-계속 원격 source-of-truth로 둔다.
+[Swann et al. (2026)](https://arxiv.org/html/2603.19183v1)은 ER1 TopK+AuxK SAE를
+batch 4,096으로 100 epochs 학습한다. 우리의 20k는 약 106.30 passes라 횟수만
+보면 가깝지만, SAE 구조·normalization·token pooling과 데이터가 다르므로
+동등 조건으로 간주하지 않는다. 특히 해당 논문의 본문 결과는 주로 timestep별
+mean-pooled activation을 사용하고, 우리는 action token을 pooling하지 않는다.
 
-## 7. 완료 gate
+현재 데이터는 2개 task family, 5 cells, 150 rollouts로 비교적 좁다. 이 때문에
+필요 학습량을 task 수에 단순 비례시키는 대신 1.2k–20k를 실제 학습하고 동일한
+full-data audit로 비교했다.
 
-다음을 모두 만족해야 Stage 1을 완료로 표시하고 Stage 2 keyframe 추출로
-넘어간다.
+## 4. 코드 상 실행 절차
 
-- [x] PQ3 5 cell × 30 = 150 PKL source contract가 혼입 없이 검증됨
-- [x] `feature_kind`, four-axis `feature_axes`, `all_token_full`이 검증됨
-- [x] physical L15가 metadata를 통해 선택됨
-- [x] `model_action_horizon=16`과 token layout `1+32+16=49`가 검증됨
-- [x] 모든 `[record,4,16]` action-token row가 pooling 없이 누락 없이 구성됨
-- [x] state/future 33개 token이 SAE 학습 row에서 배제됨
-- [x] PQ2 `phase_event_6p` activation이 입력에서 배제됨
-- [x] 선택 activation과 train/encode/decode에서 NaN/Inf가 없음
-- [x] PQ3 전용 100-step smoke에서 `ae.pt`와 `config.json`이 생성되고 reload됨
-- [x] threshold update를 포함한 1.2k pilot checkpoint가 reload되고 full-data audit됨
-- [x] reconstruction MSE, FVE, cosine, L0, firing/dead-feature 진단이 저장됨
-- [x] selected checkpoint에 numerical failure나 명백한 utilization collapse가 없음
-- [x] selected checkpoint와 config/source manifest/quality/selection이 함께 저장됨
+### 4.1 관련 코드
 
-다음 항목은 Stage 1 완료 gate가 아니다.
+- 환경: [`environment-sae-dev.yml`](../environment-sae-dev.yml)
+- 원격 export/로컬 merge:
+  [`export_pq3_activation_shards.py`](../scripts/groot/export_pq3_activation_shards.py)
+- SAE 학습:
+  [`train_sae_robocasa.py`](../scripts/groot/train_sae_robocasa.py)
+- Checkpoint audit:
+  [`audit_sae_checkpoint.py`](../scripts/groot/audit_sae_checkpoint.py)
+- 테스트:
+  [`test_groot_train_sae_robocasa.py`](../tests/test_groot_train_sae_robocasa.py)
 
-- `states`, phase, action metadata의 temporal join 검증
-- full residual reconstruction에서 앞 33개 token의 bitwise 보존 검증
-- held-out 성능, layer ablation과 feature의 event 의미
-- checkpoint SHA와 publication용 revision bundle
+### 4.2 환경과 테스트
 
-Stage 1에서는 SAE feature가 특정 event를 의미한다고 주장하지 않는다. 그
-연결은 Stage 5의 temporal scoring에서 처음 만들어지고, 인과적 의미는 Stage
-6 closed-loop intervention 이후에만 평가한다.
+```bash
+conda env create -f environment-sae-dev.yml
 
-## 8. 다음 단계로의 handoff
+conda run -n event-sae-dev python -m pytest -q   tests/test_groot_train_sae_robocasa.py
+```
 
-Stage 1이 완료되면 Stage 2는 같은 rollout PKL의
-`states[*]["observation.state.eef_pos_rel"]` trajectory에서 AWE waypoint를
-추출한다. Keyframe은 SAE activation을 보고 고르지 않는다.
+기록된 repo-scope 결과는 `9 passed`다.
 
-Stage 5에서는 Stage 1의 L15 checkpoint로 원본 activation을 다시 encode한 뒤,
-episode/inference/denoise/action-token offset을 통해 event waypoint 주변
-activation과 결합한다. 이때 activation row와 trajectory metadata의 정렬을
-Stage 5 입력 audit로 별도 검증한다.
+### 4.3 원격 activation export
+
+신뢰한 원격 PKL source에서 L15 action-token shard를 만든다.
+
+```bash
+python export_pq3_activation_shards.py export   --input-dir /home/kimseungjun/datasets/temporal_vla_outputs/eval/robocasa/groot_n15/phase_event_pq3/raw_rollouts   --output-dir pq3_l15_action_shards   --trust-pkl --layer 15
+```
+
+정상 완료 조건은 `groot_source_manifest.json`, 150개 shard,
+`num_activation_rows=770624`다. `--trust-pkl`은 provenance가 고정된 이
+source에만 사용한다.
+
+### 4.4 로컬 cache merge
+
+```bash
+conda run -n event-sae-dev python   scripts/groot/export_pq3_activation_shards.py merge   --shard-dir LOCAL_SHARD_DIR   --output-cache logs/groot_n15/pq3_l15_activation_cache/l15_action_tokens.pt
+```
+
+Merge 단계는 manifest, shard 수, tensor shape, row 수와 finite 여부를 검사한다.
+
+### 4.5 SAE 학습
+
+아래 명령에서 `RUN_DIR`, `STEPS`, `WARMUP`, `DECAY`를 3.2절의 값으로
+치환한다. `CUDA_VISIBLE_DEVICES=5`일 때 process 내부의 `cuda:0`은 physical
+GPU 5를 가리킨다.
+
+```bash
+CUDA_VISIBLE_DEVICES=5 conda run -n event-sae-dev python   scripts/groot/train_sae_robocasa.py   --activation-cache logs/groot_n15/pq3_l15_activation_cache/l15_action_tokens.pt   --save-dir RUN_DIR   --layer 15 --dict-size 1536 --sae-k 64 --lr 1e-4   --steps STEPS --batch-size 4096 --warmup-steps WARMUP   --save-every STEPS --log-steps 100 --device cuda:0   --run-tag RUN_TAG
+```
+
+실험에서 사용한 run directory는 다음과 같다.
+
+| Run | `RUN_DIR` |
+| --- | --- |
+| 1.2k selected | `logs/groot_n15/pq3_l15_stage1_selected` |
+| 4k | `logs/groot_n15/pq3_l15_candidate_4000` |
+| 10k | `logs/groot_n15/pq3_l15_production_10000` |
+| 20k | `logs/groot_n15/pq3_l15_candidate_20000` |
+
+현재 `logs`에는 각 run의 최종 `ae.pt`, `config.json`, source manifest와
+full-audit 결과만 보존한다. Smoke run과 중간 checkpoint는 제거했다.
+
+### 4.6 Full-data audit
+
+```bash
+CUDA_VISIBLE_DEVICES=5 conda run -n event-sae-dev python   scripts/groot/audit_sae_checkpoint.py   --activation-cache logs/groot_n15/pq3_l15_activation_cache/l15_action_tokens.pt   --sae-checkpoint RUN_DIR/trainer_0/ae.pt   --batch-size 512 --max-audit-rows 0 --device cuda:0
+```
+
+전체 770,624 rows 중 complete batch만 평가하므로 실제 audit row 수는
+
+```text
+floor(770,624 / 512) × 512 = 1,505 × 512 = 770,560
+```
+
+이다. 제외되는 64 rows는 전체의 약 0.0083%다. 결과는 run root의
+`sae_quality.json`과 `sae_quality_by_feature.npz`에 저장된다.
+
+## 5. Metric 정의와 계산
+
+### 5.1 Reconstruction과 sparsity
+
+입력 matrix를 `X ∈ R^(N×D)`, reconstruction을 `X_hat`, sparse code를
+`Z ∈ R^(N×M)`이라 하자. 여기서는 `N=770,560`, `D=M=1,536`이다.
+
+| Metric | 계산 | 의미 |
+| --- | --- | --- |
+| MSE | `(1/ND) Σ_i Σ_d (X_id-X_hat_id)^2` | 원소당 제곱 reconstruction 오차; 낮을수록 좋음 |
+| FVE | `1-Var(X-X_hat)/Var(X)` | 입력 분산 중 reconstruction이 설명한 비율; 1에 가까울수록 좋음 |
+| Cosine | `(1/N) Σ_i cos(X_i,X_hat_i)` | row별 방향 보존; 1에 가까울수록 좋음 |
+| Average L0 | `(1/N) Σ_i ||Z_i||_0` | row당 0이 아닌 feature 수; 목표 `k=64`와 비교 |
+| Alive fraction | `|{j: ∃i, Z_ij≠0}|/M` | source audit에서 한 번 이상 사용된 feature 비율 |
+| Dead count | `M-alive count` | audit에서 한 번도 사용되지 않은 feature 수 |
+
+FVE는 scale-normalized reconstruction 지표지만 MSE는 activation scale에
+의존하므로 서로 다른 model·layer·normalization 사이에서 직접 비교하지 않는다.
+Average L0가 64에 가깝다는 것은 sparse budget을 지켰다는 뜻이지 feature의
+의미가 좋다는 뜻은 아니다.
+
+### 5.2 Inference threshold
+
+BatchTopK는 학습 중 batch 전체 순위로 feature를 선택한다. 저장된 inference
+threshold `τ`는 batch가 하나이거나 크기가 달라도 독립적으로 encode하기 위한
+cutoff다. 개념적으로 inference에서는 pre-activation이 `τ`를 넘는 항목을
+선택한다.
+
+Threshold의 절댓값은 latent activation scale과 함께 변하므로 “낮을수록 좋다”는
+품질 metric이 아니다. 이 보고서에서는 threshold가 유한한지, checkpoint에
+저장되었는지와 실제 inference L0가 `k` 근처인지 함께 확인한다.
+
+### 5.3 Alive, general, important의 구분
+
+세 용어는 서로 다른 질문에 답한다.
+
+- **Alive:** 현재 source에서 한 번이라도 발화했는가?
+- **General:** 여러 episode·task에서 동일한 의미의 event에 일관되게 반응하는가?
+- **Behaviorally important:** ablation·steering·reconstruction hook이 실제 행동을
+  바꾸는가?
+
+[Swann et al. (2026)](https://arxiv.org/html/2603.19183v1)은 general feature를
+episode coverage, onset count, activation magnitude와 run length로 분류했다.
+보고된 general feature는 LIBERO PG5에서 `32/2,044`, OpenVLA Goal L8에서
+`8/1,775`로 소수였다. 그러나 이는 “dead feature가 많을수록 좋다”는 뜻이 아니다.
+해당 수치에서 분모는 분석 가능한 feature이고, 그중 task/scene을 넘어서는
+general feature가 소수라는 뜻이다.
+
+따라서 우리 20k의 alive 12.5%를 이 논문만으로 정당화할 수도, 실패라고 단정할
+수도 없다. Stage 1의 alive는 dictionary 사용 현황이고, feature generality와
+인과적 중요성은 Stage 5/6에서 별도로 측정한다.
+
+### 5.4 Behavioral fidelity
+
+동일한 closed-loop protocol에서
+
+```text
+Raw SR    = raw policy 성공 episode 수 / 전체 episode 수
+Hooked SR = reconstruction hook policy 성공 episode 수 / 전체 episode 수
+ΔSR       = Hooked SR - Raw SR
+```
+
+를 계산한다. `Hooked SR`은 원 residual `x`를 `Dec(Enc(x))`로 교체했을 때의
+success rate다. Offline FVE가 높아도 작은 reconstruction 오차가 action에
+누적될 수 있으므로, policy 보존의 최종 판정은 이 metric으로 해야 한다.
+
+## 6. 실험 결과 및 해석
+
+### 6.1 Full-data audit
+
+| Run | MSE ↓ | FVE ↑ | Cosine ↑ | L0 | Alive / dead | Alive % | Threshold |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1.2k | 10.2842 | 0.987958 | 0.997290 | 63.979 | 1,284 / 252 | 83.59% | 19.9559 |
+| 4k | 7.3981 | 0.991338 | 0.998131 | 63.908 | 262 / 1,274 | 17.06% | 16.3785 |
+| 10k | 5.8102 | 0.993197 | 0.998570 | 63.987 | 233 / 1,303 | 15.17% | 13.0924 |
+| 20k | 5.3015 | 0.993793 | 0.998713 | 63.997 | 192 / 1,344 | 12.50% | 11.8220 |
+
+모든 행은 같은 770,560 rows에서 계산했다. `Alive / dead`는 1,536개
+dictionary feature 중 전체 audit에서 한 번 이상 발화한 수와 한 번도 발화하지
+않은 수다. `Threshold`는 5.2절의 batch-independent inference cutoff다.
+
+### 6.2 결과 해석
+
+**Reconstruction.** 1.2k에서 20k로 갈수록 MSE는 `10.2842 → 5.3015`로
+48.45% 감소하고 FVE는 `0.987958 → 0.993793`으로 증가했다. 이 데이터에서
+reconstruction만 비교하면 20k가 가장 좋다. 다만 10k에서 20k로 늘렸을 때의
+FVE 증가는 약 0.000596으로, 후반부 개선 폭은 작아진다.
+
+**Sparsity.** 네 run 모두 평균 L0가 63.91–64.00으로 목표 `k=64`와 일치한다.
+즉 reconstruction 개선이 row당 더 많은 feature를 켜서 얻어진 것은 아니다.
+각 row는 평균적으로 dictionary의 약 4.17%만 사용한다.
+
+**Dictionary usage.** Alive feature는 1.2k의 1,284개에서 4k의 262개로 크게
+감소한 뒤, 10k 233개, 20k 192개로 계속 줄었다. 이는 긴 schedule이 source
+분포를 더 적은 feature로 압축했다는 관측이다. 그것이 유용한 specialization인지,
+feature collapse인지, 혹은 BatchTopK 학습 dynamics인지는 alive 수만으로
+구분할 수 없다.
+
+**Schedule confound.** 1.2k는 warmup 100, 나머지는 warmup 1,000인 독립
+run이다. 따라서 1.2k와 4k 사이의 큰 alive 차이를 optimizer step만의 효과로
+주장하지 않는다. 엄밀한 학습량 ablation에는 동일 warmup/decay schedule과
+여러 random seed가 필요하다.
+
+### 6.3 Checkpoint 선택
+
+| 용도 | Checkpoint | 판단 |
+| --- | --- | --- |
+| 후속 feature discovery handoff | 1.2k | 넓은 alive coverage를 우선한 provisional 선택 |
+| 짧은 논문 step 비교 | 4k | reconstruction은 개선됐지만 alive가 급감한 경계점 |
+| Event-Grounded PG/AE step 비교 | 10k | 높은 reconstruction의 offline-valid alternate |
+| 장기/약 100-pass 비교 | 20k | 최고 reconstruction의 offline-valid alternate |
+
+현재 1.2k 선택은 “가장 잘 학습된 SAE”라는 최종 판정이 아니다. Stage 2–5에서
+많은 candidate feature를 살펴보기 위한 실용적 handoff다. 반대로 20k도 alive가
+적다는 이유만으로 실패가 아니다. 네 checkpoint 모두 input/code/reconstruction
+finite 검사, save/reload와 full-data audit를 통과했다.
+
+최종 선택에는 최소한 다음 증거가 더 필요하다.
+
+1. 동일 rollout set의 Raw SR과 1.2k/4k/10k/20k Hooked SR
+2. episode/task별 feature coverage와 event-aligned onset 분석
+3. 주요 feature의 여러 seed 재현성
+4. 선택 feature의 ablation 또는 steering 결과
+
+## 7. 결론
+
+| 검증 범위 | 상태 | 근거 또는 남은 조건 |
+| --- | --- | --- |
+| Data contract | 완료 | 150 PKL, 12,041 records, 770,624 rows audit |
+| Training pipeline | 완료 | 1.2k/4k/10k/20k train, save/reload |
+| Offline reconstruction | 완료 | 동일 770,560-row MSE/FVE/Cosine |
+| Offline sparsity/usage | 완료 | L0, alive/dead, threshold와 finite 검사 |
+| Repo-scope Stage 1 | **완료** | provisional handoff와 비교 checkpoint 보존 |
+| Behavioral fidelity | 미완료 | Raw SR 대비 reconstruction-only Hooked SR 필요 |
+| Event semantics/causality | 범위 밖 | Stage 5/6에서 검증 |
+
+최종 산출물 경로:
+
+```text
+logs/groot_n15/
+├── pq3_l15_activation_cache/l15_action_tokens.pt
+├── pq3_l15_stage1_selected/trainer_0/ae.pt
+├── pq3_l15_candidate_4000/trainer_0/ae.pt
+├── pq3_l15_production_10000/trainer_0/ae.pt
+└── pq3_l15_candidate_20000/trainer_0/ae.pt
+```
+
+각 run root에는 `groot_source_manifest.json`, `sae_quality.json`,
+`sae_quality_by_feature.npz`와 `trainer_0/config.json`이 함께 있다.
+
+Stage 1은 현재 repo에서 재현 가능한 offline 단계로 완료했다. 네 run 모두
+sparse reconstruction에는 성공했고, 학습량 증가에 따라 reconstruction과
+dictionary usage 사이의 trade-off가 관찰되었다. 현재 handoff는 1.2k지만
+paper-aligned final checkpoint는 아직 정하지 않는다. 그 결정은 동일한
+closed-loop Hooked SR과 후속 feature generality·causality 검증 이후에 내린다.
