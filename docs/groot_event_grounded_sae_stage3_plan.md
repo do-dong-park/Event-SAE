@@ -5,7 +5,6 @@
 - 상태: **원격 미디어 패키저 구현·로컬 테스트 완료, 원격 pilot 대기**
 - 로컬 환경: `event-sae-dev`
 - 원격 미디어 환경: `event-sae-media`
-- temporal_vla 구현: `feat/groot-event-sae-media`, `86a81ae`
 
 Stage 3의 목표는 Stage 2에서 찾은 end-effector waypoint를 영상과 robot state가 결합된 event sample로 바꾸고, 같은 task 안에서 반복되는 event를 묶어 사람이 읽을 수 있는 phrase와 phase를 부여하는 것이다. 이 단계에서는 SAE activation이나 checkpoint를 사용하지 않는다. SAE feature와 event를 연결하는 작업은 Stage 3 완료 뒤 ranking bridge에서 수행한다.
 
@@ -119,7 +118,11 @@ Stage 1·2와 Stage 3의 연구 코드는 모두 로컬 `event-sae-dev`를 canon
 └── pq3_stage3_media/
 ```
 
-코드는 로컬에서 test와 commit을 통과한 뒤 Git으로 원격에 동기화한다. 모든 원격 명령과 작은 결과 회수는 temporal_vla의 `scripts/utils/remote_compute.sh`만 사용한다. `scripts/event_sae/` 아래에는 생성 결과를 쓰지 않는다.
+미디어 어댑터는 로컬에서 test한 뒤 원격 temporal_vla의 `scripts/event_sae/`에
+uncommitted execution copy로 배치한다. temporal_vla에는 Stage 3용 branch나
+commit을 만들지 않는다. 모든 원격 명령과 작은 결과 회수는 temporal_vla의
+`scripts/utils/remote_compute.sh`만 사용한다. `scripts/event_sae/` 아래에는
+생성 결과를 쓰지 않는다.
 
 ### 3.3 원격 최소 환경
 
@@ -248,8 +251,7 @@ Frame은 연속 frame이 아니라 시간순으로 sampling한 frame임을 promp
 
 - [x] 원격 media adapter와 environment YAML 작성
 - [x] 로컬 단위·통합 test 6개 통과
-- [x] temporal_vla branch commit/push (`86a81ae`)
-- [ ] 원격 temporal_vla HEAD 검증
+- [ ] 원격 temporal_vla working copy에 adapter 배치 후 file SHA 검증
 - [ ] 원격 `event-sae-media` 생성 및 import/decode smoke test
 - [ ] Stage 2 manifest/waypoint hash를 원격 입력에서 재검증
 
