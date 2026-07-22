@@ -123,12 +123,43 @@ def _reconstruct_positions(
     return reconstruction, anchors
 
 
+def _awe_geometric_errors(
+    positions: np.ndarray,
+    waypoint_indices: list[int],
+) -> np.ndarray:
+    """Replicate AWE pos_only point-to-line-segment error per record."""
+    anchors = sorted(set([0, len(positions) - 1, *waypoint_indices]))
+    errors: list[np.ndarray] = []
+    for start, stop in zip(anchors[:-1], anchors[1:], strict=True):
+        points = positions[start:stop]
+        line_start = positions[start]
+        line_vector = positions[stop] - line_start
+        denominator = float(np.dot(line_vector, line_vector))
+        if denominator == 0.0:
+            segment_errors = np.linalg.norm(points - line_start, axis=1)
+        else:
+            projection_fraction = (
+                (points - line_start) @ line_vector / denominator
+            )
+            projection_fraction = np.clip(projection_fraction, 0.0, 1.0)
+            projections = (
+                line_start
+                + projection_fraction[:, np.newaxis] * line_vector
+            )
+            segment_errors = np.linalg.norm(points - projections, axis=1)
+        errors.append(segment_errors)
+    if not errors:
+        return np.zeros((1,), dtype=np.float64)
+    return np.concatenate(errors)
+
+
 def _episode_metrics(
     episode_num: int,
     source: dict[str, Any],
     summary_episode: dict[str, Any],
     reference_events: list[int],
     event_tolerance: int,
+    err_threshold: float,
 ) -> dict[str, Any]:
     positions = source["positions"]
     num_steps = len(positions)
@@ -166,6 +197,10 @@ def _episode_metrics(
         waypoint_indices,
     )
     per_step_error = np.linalg.norm(positions - reconstructed, axis=1)
+    awe_geometric_error = _awe_geometric_errors(
+        positions,
+        waypoint_indices,
+    )
     event_matches = [
         min((abs(event - waypoint) for waypoint in waypoint_indices), default=None)
         for event in reference_events
@@ -190,6 +225,11 @@ def _episode_metrics(
         ),
         "rmse": float(np.sqrt(np.mean(np.square(per_step_error)))),
         "max_error": float(np.max(per_step_error)),
+        "awe_geometric_mean_error": float(np.mean(awe_geometric_error)),
+        "awe_geometric_max_error": float(np.max(awe_geometric_error)),
+        "awe_threshold_satisfied": bool(
+            np.max(awe_geometric_error) < err_threshold + 1e-9
+        ),
         "starts_at_first_record": bool(
             waypoint_indices and waypoint_indices[0] == 0
         ),
@@ -225,6 +265,14 @@ def _aggregate(run_episodes: list[dict[str, Any]]) -> dict[str, Any]:
         [episode["num_waypoints"] for episode in run_episodes],
         dtype=np.float64,
     )
+    compression_factors = np.asarray(
+        [episode["compression_factor"] for episode in run_episodes],
+        dtype=np.float64,
+    )
+    awe_max_errors = np.asarray(
+        [episode["awe_geometric_max_error"] for episode in run_episodes],
+        dtype=np.float64,
+    )
     total_events = sum(episode["num_reference_events"] for episode in run_episodes)
     total_matches = sum(episode["num_matched_events"] for episode in run_episodes)
     return {
@@ -234,10 +282,18 @@ def _aggregate(run_episodes: list[dict[str, Any]]) -> dict[str, Any]:
         "median_waypoints": float(np.median(waypoint_counts)),
         "mean_waypoint_density": float(np.mean(densities)),
         "median_waypoint_density": float(np.median(densities)),
+        "mean_compression_factor": float(np.mean(compression_factors)),
+        "median_compression_factor": float(np.median(compression_factors)),
         "mean_rmse": float(np.mean(rmses)),
         "max_episode_rmse": float(np.max(rmses)),
         "mean_max_error": float(np.mean(max_errors)),
         "global_max_error": float(np.max(max_errors)),
+        "mean_awe_geometric_max_error": float(np.mean(awe_max_errors)),
+        "global_awe_geometric_max_error": float(np.max(awe_max_errors)),
+        "num_awe_threshold_violations": sum(
+            not episode["awe_threshold_satisfied"]
+            for episode in run_episodes
+        ),
         "num_reference_events": total_events,
         "num_matched_events": total_matches,
         "micro_event_recall": (
@@ -279,6 +335,7 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
                 f"{summary_path}: episode inventory mismatch; "
                 f"missing={missing[:10]}, extra={extra[:10]}"
             )
+        threshold = float(summary["err_threshold"])
         run_episodes = [
             _episode_metrics(
                 episode_num,
@@ -286,10 +343,10 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
                 summary_episodes[episode_num],
                 reference_events.get(episode_num, []),
                 args.event_tolerance,
+                threshold,
             )
             for episode_num in sorted(source_episodes)
         ]
-        threshold = float(summary["err_threshold"])
         counts_by_run.append(
             (
                 threshold,
@@ -303,6 +360,7 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "waypoint_summary_path": str(summary_path),
                 "waypoint_mode": str(summary.get("waypoint_mode", "")),
+                "dp_implementation": str(summary.get("dp_implementation", "awe")),
                 "err_threshold": threshold,
                 "aggregate": _aggregate(run_episodes),
                 "episodes": run_episodes,
@@ -325,6 +383,9 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
 
+    total_threshold_violations = sum(
+        run["aggregate"]["num_awe_threshold_violations"] for run in runs
+    )
     report = {
         "format": AUDIT_FORMAT,
         "trajectory_records_path": str(records_path),
@@ -343,9 +404,16 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
             "violations": monotonic_violations,
         },
         "integrity_audit_passed": True,
+        "threshold_contract": {
+            "definition": "every episode must have awe_geometric_max_error < err_threshold",
+            "passed": total_threshold_violations == 0,
+            "num_violations": total_threshold_violations,
+        },
         "reconstruction_note": (
-            "Linear interpolation uses implicit first/last record anchors when "
-            "AWE does not report them; implicit_boundary_count records this."
+            "RMSE/max_error use time-indexed linear interpolation. AWE threshold "
+            "checks use point-to-line-segment distance and are reported as "
+            "awe_geometric_* metrics. Both prepend the implicit first record "
+            "anchor when AWE does not report it."
         ),
     }
     output_path = args.output.resolve()

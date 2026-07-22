@@ -128,18 +128,99 @@ def gripper_toggle_indices(episode: EpisodeTrajectory) -> list[int]:
     ]
 
 
+def _pos_segment_max_error(
+    positions: np.ndarray,
+    start: int,
+    stop: int,
+) -> float:
+    """Maximum AWE point-to-line-segment error on the half-open interval."""
+    points = positions[start:stop]
+    line_start = positions[start]
+    line_vector = positions[stop] - line_start
+    denominator = float(np.dot(line_vector, line_vector))
+    if denominator == 0.0:
+        return float(np.max(np.linalg.norm(points - line_start, axis=1)))
+    fractions = (points - line_start) @ line_vector / denominator
+    fractions = np.clip(fractions, 0.0, 1.0)
+    projections = line_start + fractions[:, np.newaxis] * line_vector
+    return float(np.max(np.linalg.norm(points - projections, axis=1)))
+
+
+def extract_waypoints_exact_pos_only(
+    episode: EpisodeTrajectory,
+    *,
+    err_threshold: float = 0.05,
+) -> list[int]:
+    """Select the fewest position waypoints under AWE's geometric error.
+
+    This is a shortest-path dynamic program over trajectory indices. An edge
+    from start to stop is feasible only when every point in that contiguous
+    interval lies within err_threshold of the endpoint line segment.
+    Index 0 is an implicit anchor, matching AWE's reconstruction convention;
+    the returned list contains subsequent anchors including the final record.
+    """
+    if not np.isfinite(err_threshold) or err_threshold <= 0:
+        raise ValueError("err_threshold must be finite and positive")
+    positions = np.asarray(episode.positions, dtype=np.float64)
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError(f"positions must have shape [T,3], got {positions.shape}")
+    if len(positions) < 2:
+        return []
+
+    num_steps = len(positions)
+    unreachable = np.iinfo(np.int32).max
+    waypoint_count = np.full(num_steps, unreachable, dtype=np.int64)
+    predecessor = np.full(num_steps, -1, dtype=np.int64)
+    waypoint_count[0] = 0
+
+    for stop in range(1, num_steps):
+        for start in range(stop):
+            if waypoint_count[start] == unreachable:
+                continue
+            if _pos_segment_max_error(positions, start, stop) >= err_threshold:
+                continue
+            candidate_count = waypoint_count[start] + 1
+            if candidate_count < waypoint_count[stop]:
+                waypoint_count[stop] = candidate_count
+                predecessor[stop] = start
+
+    if predecessor[-1] < 0:
+        raise RuntimeError("No feasible waypoint path; adjacent records should be feasible")
+    waypoints: list[int] = []
+    current = num_steps - 1
+    while current > 0:
+        waypoints.append(int(current))
+        current = int(predecessor[current])
+    waypoints.reverse()
+    return waypoints
+
+
 def extract_waypoints_dp(
     episode: EpisodeTrajectory,
     *,
     waypoint_mode: str = "pos_only",
     err_threshold: float = 0.05,
     show_awe_logs: bool = False,
+    dp_implementation: str = "awe",
 ) -> list[int]:
-    """Run AWE `dp_waypoint_selection` on a single episode and return waypoint step indices.
+    """Select waypoint indices with upstream AWE or the corrected exact DP.
 
-    `waypoint_mode='pos_only'` uses end-effector position only; `'geometric_gripper'`
-    additionally consumes `eef_quat` and `gripper_action`.
+    Position-only mode uses end-effector position. Geometric-gripper mode also
+    consumes quaternion and gripper input. The awe implementation option
+    preserves the upstream call for compatibility.
     """
+    if dp_implementation == "exact_pos_only":
+        if waypoint_mode != "pos_only":
+            raise ValueError(
+                "exact_pos_only implementation requires waypoint_mode='pos_only'"
+            )
+        return extract_waypoints_exact_pos_only(
+            episode,
+            err_threshold=err_threshold,
+        )
+    if dp_implementation != "awe":
+        raise ValueError(f"Unsupported DP implementation: {dp_implementation}")
+
     if waypoint_mode == "pos_only":
         call_kwargs = {
             "env": None,

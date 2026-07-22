@@ -82,6 +82,7 @@ def _write_summary(
         json.dumps(
             {
                 "waypoint_mode": "pos_only",
+                "dp_implementation": "exact_pos_only",
                 "err_threshold": threshold,
                 "episodes": [
                     {
@@ -130,11 +131,17 @@ def test_waypoint_audit_computes_reconstruction_and_monotonicity(
 
     assert [run["err_threshold"] for run in report["runs"]] == [0.02, 0.1]
     tight, coarse = report["runs"]
+    assert tight["dp_implementation"] == "exact_pos_only"
     assert tight["aggregate"]["global_max_error"] == pytest.approx(0.0)
+    assert tight["aggregate"]["num_awe_threshold_violations"] == 0
     assert coarse["aggregate"]["global_max_error"] == pytest.approx(1.0)
+    assert coarse["aggregate"]["global_awe_geometric_max_error"] == pytest.approx(1.0)
+    assert coarse["aggregate"]["num_awe_threshold_violations"] == 1
     assert tight["aggregate"]["micro_event_recall"] == pytest.approx(1.0)
     assert coarse["aggregate"]["micro_event_recall"] == pytest.approx(0.0)
     assert report["threshold_monotonicity"]["passed"] is True
+    assert report["threshold_contract"]["passed"] is False
+    assert report["threshold_contract"]["num_violations"] == 1
     assert output.is_file()
 
 

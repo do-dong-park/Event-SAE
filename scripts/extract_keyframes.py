@@ -47,6 +47,15 @@ def main() -> None:
     )
     parser.add_argument("--err-threshold", type=float, default=0.05, help="AWE error threshold")
     parser.add_argument(
+        "--dp-implementation",
+        choices=("awe", "exact_pos_only"),
+        default="awe",
+        help=(
+            "DP implementation. exact_pos_only enforces AWE's geometric threshold "
+            "on every contiguous segment; awe preserves the upstream implementation."
+        ),
+    )
+    parser.add_argument(
         "--success-filter", choices=("all", "success", "failure"), default="all"
     )
     parser.add_argument("--task-description", default=None, help="Exact task_description filter")
@@ -69,6 +78,10 @@ def main() -> None:
         raise ValueError("No episodes matched the requested filters.")
     if args.waypoint_mode == "geometric_gripper":
         require_geometric_gripper_inputs(selected)
+    if args.dp_implementation == "exact_pos_only" and args.waypoint_mode != "pos_only":
+        raise ValueError(
+            "--dp-implementation exact_pos_only requires --waypoint-mode pos_only"
+        )
 
     output_dir = (
         Path(args.output_dir).resolve()
@@ -81,6 +94,7 @@ def main() -> None:
         "source_trajectory_records_path": str(records_path),
         "output_dir": str(output_dir),
         "waypoint_mode": args.waypoint_mode,
+        "dp_implementation": args.dp_implementation,
         "err_threshold": float(args.err_threshold),
         "success_filter": args.success_filter,
         "task_description_filter": args.task_description,
@@ -100,6 +114,7 @@ def main() -> None:
             waypoint_mode=args.waypoint_mode,
             err_threshold=args.err_threshold,
             show_awe_logs=args.show_awe_logs,
+            dp_implementation=args.dp_implementation,
         )
         ep_seconds = time.perf_counter() - ep_start
         extraction_times.append(ep_seconds)
@@ -116,6 +131,7 @@ def main() -> None:
                 "num_waypoints": len(waypoints),
                 "waypoint_positions": episode.positions[waypoints].tolist(),
                 "waypoint_mode": args.waypoint_mode,
+                "dp_implementation": args.dp_implementation,
                 "has_eef_quat": episode.quaternions is not None,
                 "has_gripper_action": episode.gripper_actions is not None,
                 "gripper_toggle_indices": gripper_toggle_indices(episode),
