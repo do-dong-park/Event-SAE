@@ -19,7 +19,9 @@ def _default_output_dir(waypoint_summary_path: Path) -> Path:
     # Pick the backend bucket from the source path so OpenPI runs land
     # under logs/openpi/events/ rather than logs/openvla/.
     parts = waypoint_summary_path.resolve().parts
-    backend = next((p for p in parts if p in {"openvla", "openpi"}), "openvla")
+    backend = next((p for p in parts if p in {"openvla", "openpi"}), None)
+    if backend is None:
+        backend = "groot" if any(p.startswith("groot") for p in parts) else "openvla"
     return Path("logs") / backend / "events" / run_name / "samples_5frames_stride2"
 
 
@@ -27,16 +29,50 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Render 5-frame bundles around each AWE waypoint."
     )
-    parser.add_argument("--waypoint-summary-path", required=True, help="Path to waypoint_summary.json")
-    parser.add_argument("--output-dir", default=None, help="Output directory (default: derived from summary path)")
+    parser.add_argument(
+        "--waypoint-summary-path",
+        required=True,
+        help="Path to waypoint_summary.json",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Output directory (default: derived from summary path)",
+    )
     parser.add_argument(
         "--frame-offsets",
         type=int,
         nargs="+",
         default=[-4, -2, 0, 2, 4],
-        help="Frame offsets around each waypoint index. Default: -4 -2 0 2 4 (5 frames, stride 2).",
+        help="Trajectory-record offsets around each waypoint. Default: -4 -2 0 2 4.",
     )
-    parser.add_argument("--max-samples", type=int, default=None, help="Cap on the number of extracted samples")
+    parser.add_argument(
+        "--trajectory-manifest-path",
+        default=None,
+        help="Optional trajectory_manifest.json (auto-detected beside JSONL)",
+    )
+    parser.add_argument(
+        "--video-root",
+        default=None,
+        help="Root containing manifest-relative GR00T MP4 paths",
+    )
+    parser.add_argument(
+        "--frame-anchor",
+        choices=("first", "center", "last"),
+        default="first",
+        help="Representative frame within each policy record video interval",
+    )
+    parser.add_argument(
+        "--require-complete-videos",
+        action="store_true",
+        help="Fail before packaging when any exact episode MP4 is missing",
+    )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Cap on the number of extracted samples",
+    )
     args = parser.parse_args()
 
     waypoint_summary_path = Path(args.waypoint_summary_path).resolve()
@@ -51,6 +87,14 @@ def main() -> None:
         output_dir=output_dir,
         frame_offsets=list(args.frame_offsets),
         max_samples=args.max_samples,
+        trajectory_manifest_path=(
+            Path(args.trajectory_manifest_path)
+            if args.trajectory_manifest_path is not None
+            else None
+        ),
+        video_root=Path(args.video_root) if args.video_root is not None else None,
+        frame_anchor=args.frame_anchor,
+        require_complete_videos=args.require_complete_videos,
     )
     print(f"Waypoints source: {report['waypoint_summary_path']}")
     print(f"Output dir: {report['output_dir']}")

@@ -1,10 +1,11 @@
 # GR00T Event-Grounded SAE Stage 2 — 실행 계획
 
 - 작성일: 2026-07-21
+- 갱신일: 2026-07-22
 - 대상: GR00T N1.5, RoboCasa PQ3
 - 단계: Kinematic keyframe extraction
 - 기본 방법: AWE dynamic-programming waypoint selection
-- 상태: **계획 수립 완료, 구현·실행 전**
+- 상태: **입력 adapter와 video timeline 구현 완료, 원격 export·AWE 실행 전**
 
 Stage 2의 목적은 closed-loop rollout의 end-effector trajectory를 소수의
 kinematic waypoint로 압축하는 것이다. 이 waypoint는 Stage 3의 event window
@@ -28,11 +29,16 @@ Stage 2는 다음 순서로 진행한다.
 logs/groot_n15/pq3_stage2_keyframes/
 ├── trajectory_records.jsonl
 ├── trajectory_manifest.json
+├── trajectory_audit.json
 ├── dp_pos_only_err0p02/waypoint_summary.json
 ├── dp_pos_only_err0p05/waypoint_summary.json
 ├── dp_pos_only_err0p10/waypoint_summary.json
 └── waypoint_audit.json
 ```
+
+현재 repo에는 exporter, JSONL audit, GR00T video timeline과 합성 테스트까지
+준비되어 있다. 아직 완료하지 않은 것은 원격 150개 PKL의 실제 export, AWE
+dependency 설치·고정, threshold sweep과 결과 audit이다.
 
 ## 1. 목표와 범위
 
@@ -80,11 +86,14 @@ Stage 1과 동일한 원격 source를 사용한다.
 | Instruction/scene cell | 5 |
 | Task family | 2 |
 | Policy records | 12,041 |
+| Exact-stem MP4 | 150 / 150 |
+| MP4 총 frame 수 | 30,127 |
+| PKL↔MP4 누락/extra | 0 / 0 |
 | SAE 의존성 | 없음 |
 
 ### 2.2 GR00T PKL에서 확인된 trajectory field
 
-동일 계열의 로컬 GR00T rollout을 검사한 결과 각 PKL은 `states`와 `actions`를
+원격 PQ3 rollout을 read-only로 검사한 결과 각 PKL은 `states`와 `actions`를
 policy record 단위로 저장한다.
 
 | PQ3 변환 대상 | GR00T PKL source |
@@ -102,22 +111,25 @@ frame을 사용한다면 AWE의 trajectory shape 비교에는 사용할 수 있�
 순서와 gripper command의 실제 실행 step 대응은 `geometric_gripper` mode를
 사용하기 전에 별도 검증해야 한다.
 
-### 2.3 현재 repo의 재사용 가능 코드
+### 2.3 현재 repo의 구현 상태
 
+- [`scripts/groot/export_pq3_trajectories.py`](../scripts/groot/export_pq3_trajectories.py)
+  - trusted PKL을 공통 `trajectory_records.jsonl`과 manifest로 변환
+  - inventory, shape, finite, step continuity와 exact video path audit
 - [`event_sae/keyframes/extract.py`](../event_sae/keyframes/extract.py)
-  - episode grouping, filtering, AWE 호출
-  - `pos_only`와 `geometric_gripper` mode
+  - 기존 episode grouping, filtering, AWE 호출을 수정 없이 재사용
 - [`scripts/extract_keyframes.py`](../scripts/extract_keyframes.py)
-  - `trajectory_records.jsonl` 입력
-  - `waypoint_summary.json` 출력
+  - 기존 `trajectory_records.jsonl` 입력과 `waypoint_summary.json` 출력 재사용
+  - GR00T output path 추론 지원
+- [`event_sae/events/video_timeline.py`](../event_sae/events/video_timeline.py)
+  - policy record와 rendered video frame 사이의 정수 시간축 변환
+- [`scripts/extract_keyframe_media.py`](../scripts/extract_keyframe_media.py)
+  - manifest-relative exact MP4 lookup과 missing-video 정책 지원
 
-현재 gap:
+남은 gap:
 
-1. PQ3 PKL을 `trajectory_records.jsonl`로 변환하는 GR00T adapter가 없다.
-2. `event-sae-dev` 환경에 `waypoint_extraction` module이 설치되어 있지 않다.
-3. 기본 output path 추론은 `openvla/openpi`만 인식하므로 GR00T는
-   `--output-dir`을 명시하거나 backend 추론을 확장해야 한다.
-4. GR00T keyframe extraction 전용 test와 audit CLI가 아직 없다.
+1. `event-sae-dev` 환경에 `waypoint_extraction` module이 아직 설치되어 있지 않다.
+2. 원격 150개 PKL에 exporter를 실행하고 작은 JSON 산출물을 회수해야 한다.
 
 ## 3. 입력 계약
 
@@ -128,7 +140,7 @@ frame을 사용한다면 AWE의 trajectory shape 비교에는 사용할 수 있�
 | Field | Type | 의미 |
 | --- | --- | --- |
 | `episode_num` | int | 150개 파일 전체에서 유일한 episode 번호 |
-| `task_id` | int | task family의 안정된 정수 ID |
+| `task_id` | int | PKL과 파일명에 기록된 RoboCasa source task index |
 | `task_episode_idx` | int | task/cell 내부 episode 순번 |
 | `step_in_episode` | int | 0부터 시작하는 policy record index |
 | `eef_pos` | float[3] | robot-relative end-effector position |
@@ -136,13 +148,12 @@ frame을 사용한다면 AWE의 trajectory shape 비교에는 사용할 수 있�
 | `task_description` | str | canonical task description |
 | `prompt_task_description` | str | 실제 policy instruction |
 
-선택 field:
-
-- `eef_quat`: float[4]
-- `gripper_action`: scalar
-- `gripper_qpos`: float[2]
-- `cell_id`, `source_file`, `episode_success`
-- `event_steps` 기반 diagnostic label
+이번 GR00T export에서 `eef_quat: float[4]`와 `gripper_qpos: float[2]`도
+required field로 저장한다. 따라서 한 record의 end-effector pose는
+`eef_pos[3] + eef_quat[4]`인 7D다. `actions[*]["action.gripper_close"]`는
+scalar가 아니라 `[16,1]` planning chunk이므로 임의로 scalar화하지 않는다.
+`event_steps`, `grasp_steps`, `drop_steps`는 중복을 피하기 위해 episode별
+manifest에 보존한다.
 
 ### 3.2 변환 invariant
 
@@ -170,12 +181,12 @@ Raw PKL과 hidden activation은 원격에 유지한다. Stage 1과 같은 방식
 standalone trajectory exporter만 원격에 전달하고, 작은 JSONL과 manifest만
 로컬로 가져온다.
 
-계획된 구현:
+구현된 CLI:
 
 ```text
 scripts/groot/export_pq3_trajectories.py
 ├── export: trusted PKL → trajectory_records.jsonl + manifest
-└── audit:  inventory/schema/finite/step continuity 재검사
+└── audit:  inventory/schema/finite/step continuity와 video inventory 재검사
 ```
 
 PKL loading은 신뢰한 source에서만 `--trust-pkl`로 허용한다.
@@ -242,28 +253,42 @@ Gripper transition은 먼저 baseline waypoint의 diagnostic recall을 계산하
 
 ### 5.1 Dependency 준비
 
-AWE repository의 `waypoint_extraction` module과 `robosuite` dependency를
-`event-sae-dev`에서 import할 수 있어야 한다. 설치 후 다음 smoke test를 통과한다.
+AWE fork는 commit `7197bb86a20784666dabed90e6eabcf8bb1e9912`,
+`robosuite==1.4.0`으로 고정한다. `event-sae-dev`의 NumPy 1.26 계약을 보존하기
+위해 OpenCV도 `4.11.0.86`으로 고정한다. 설치 후 다음 smoke test를 통과한다.
 
 ```bash
 conda run -n event-sae-dev python -c   "from waypoint_extraction import dp_waypoint_selection; print('AWE import OK')"
 ```
 
-Dependency revision은 manifest 또는 문서에 commit hash로 고정한다.
+2026-07-22 기준 AWE import, synthetic DP 호출, `pip check`와 repo test 22개를
+통과했다. `external/awe`는 gitignored editable clone이며 재현 가능한 pin은
+`environment-sae-dev.yml`에 기록한다. Repo test는 upstream AWE test가 자동
+수집되지 않도록 `python -m pytest -q tests`로 실행한다.
 
 ### 5.2 Trajectory export
 
-계획 명령:
+원격 raw rollout 옆에서 standalone exporter만 실행한다.
 
 ```bash
-python export_pq3_trajectories.py export   --input-dir /home/kimseungjun/datasets/temporal_vla_outputs/eval/robocasa/groot_n15/phase_event_pq3/raw_rollouts   --output-jsonl pq3_stage2/trajectory_records.jsonl   --output-manifest pq3_stage2/trajectory_manifest.json   --trust-pkl
+python scripts/groot/export_pq3_trajectories.py export \
+  --input-dir /home/kimseungjun/datasets/temporal_vla_outputs/eval/robocasa/groot_n15/phase_event_pq3/raw_rollouts \
+  --output-dir pq3_stage2_keyframes \
+  --trust-pkl
 ```
 
-로컬 전송 후 audit:
+로컬로 `trajectory_records.jsonl`과 `trajectory_manifest.json`만 회수한 뒤
+다시 audit한다. Audit는 exact-stem 영상 inventory도 함께 확인한다.
 
 ```bash
-conda run -n event-sae-dev python   scripts/groot/export_pq3_trajectories.py audit   --trajectory-records-path logs/groot_n15/pq3_stage2_keyframes/trajectory_records.jsonl   --manifest logs/groot_n15/pq3_stage2_keyframes/trajectory_manifest.json
+conda run -n event-sae-dev python scripts/groot/export_pq3_trajectories.py audit \
+  --trajectory-records-path logs/groot_n15/pq3_stage2_keyframes/trajectory_records.jsonl \
+  --manifest logs/groot_n15/pq3_stage2_keyframes/trajectory_manifest.json \
+  --video-root /path/to/phase_event_pq3/raw_rollouts
 ```
+
+현재 원격 inventory는 150개 PKL과 exact-stem MP4 150개가 모두 대응한다.
+최종 audit에는 `--require-complete-videos`를 붙여 이 조건을 강제한다.
 
 ### 5.3 AWE baseline
 
@@ -273,12 +298,50 @@ conda run -n event-sae-dev python scripts/extract_keyframes.py   --trajectory-re
 
 같은 명령을 `η=0.02`와 `η=0.10`에 대해 반복한다.
 
-### 5.4 Audit
+### 5.4 Video timeline handoff
 
-계획된 audit는 source JSONL과 세 `waypoint_summary.json`을 함께 읽는다.
+GR00T 영상은 policy record와 1:1이 아니다. Episode의 record 수를 `R`,
+`A=n_action_steps`, `S=steps_per_render`라 하면 다음 계약을 쓴다.
+
+```text
+expected_frames = ceil(R * A / S)
+frame_start(r)  = ceil(r * A / S)
+frame_stop(r)   = ceil((r + 1) * A / S) - 1
+```
+
+현재 PQ3의 `A=5`, `S=2`에서는 144 records가 360 frames, 35 records가
+88 frames에 대응한다. 원격 150개 전체를 검사한 결과 CSV의 12,041 records와
+MP4의 30,127 frames가 episode별로 이 공식을 모두 만족했다. Keyframe 주변
+offset은 먼저 record 공간에서 적용한
+뒤 각 record의 대표 frame으로 변환한다. 기본 대표 frame은 interval의 첫
+frame이다. 이 식은 기존 GR00T annotation 코드의 계약을 그대로 따른다. 실제
+overlay를 만들 때는 gripper transition을 기준으로 ±1 frame 오프셋을 수동
+확인하고, 차이가 있으면 manifest의 calibration 결과로 기록한다.
+
+Stage 3 media packaging 준비 명령은 다음과 같다. 최종 실행에서는
+`--require-complete-videos`를 사용한다. 부분 inventory smoke test에서만 이
+옵션을 생략하며, 그 경우 없는 episode는 명시적으로 skip된다.
 
 ```bash
-conda run -n event-sae-dev python   scripts/groot/audit_pq3_keyframes.py   --trajectory-records-path logs/groot_n15/pq3_stage2_keyframes/trajectory_records.jsonl   --waypoint-root logs/groot_n15/pq3_stage2_keyframes   --event-tolerance 2   --output logs/groot_n15/pq3_stage2_keyframes/waypoint_audit.json
+python scripts/extract_keyframe_media.py \
+  --waypoint-summary-path logs/groot_n15/pq3_stage2_keyframes/dp_pos_only_err0p05/waypoint_summary.json \
+  --trajectory-manifest-path logs/groot_n15/pq3_stage2_keyframes/trajectory_manifest.json \
+  --video-root /path/to/phase_event_pq3/raw_rollouts \
+  --frame-anchor first \
+  --require-complete-videos
+```
+
+### 5.5 Waypoint audit
+
+구현된 audit는 source JSONL과 세 `waypoint_summary.json`을 함께 읽는다.
+
+```bash
+conda run -n event-sae-dev python scripts/groot/audit_pq3_keyframes.py \
+  --trajectory-records-path logs/groot_n15/pq3_stage2_keyframes/trajectory_records.jsonl \
+  --trajectory-manifest logs/groot_n15/pq3_stage2_keyframes/trajectory_manifest.json \
+  --waypoint-root logs/groot_n15/pq3_stage2_keyframes \
+  --event-tolerance 2 \
+  --output logs/groot_n15/pq3_stage2_keyframes/waypoint_audit.json
 ```
 
 `--event-tolerance 2`는 reference event와 waypoint가 ±2 policy records 안에
@@ -359,7 +422,17 @@ nearest-step matching으로 보고한다.
 
 `geometric_gripper`는 필수 실험 이후의 optional ablation이다.
 
-### 7.2 Repo-scope 완료 조건
+### 7.2 구현 준비 검증
+
+2026-07-22 기준 합성 검증 결과는 다음과 같다.
+
+- GR00T PKL exporter와 JSONL/manifest audit 구현
+- `144→360`, `35→88` timeline 계산 검증
+- record offset을 frame index로 변환하는 media 통합 검증
+- exact-stem 영상이 없을 때 다른 실험 영상으로 fallback하지 않음
+- 신규 합성 테스트 13개 통과
+
+### 7.3 Repo-scope 완료 조건
 
 Stage 2는 다음 조건을 모두 만족하면 완료한다.
 
@@ -374,7 +447,7 @@ Stage 2는 다음 조건을 모두 만족하면 완료한다.
 - [ ] `η=0.05` baseline을 canonical Stage 3 handoff로 지정한다.
 - [ ] 실행 명령, code revision, source manifest와 audit 결과를 최종 보고서에 기록한다.
 
-### 7.3 Stage 3 handoff
+### 7.4 Stage 3 handoff
 
 Canonical output:
 

@@ -29,7 +29,9 @@ def _default_output_dir(records_path: Path, err_threshold: float, waypoint_mode:
     # Pick the backend bucket from the source path so OpenPI runs do not
     # land under logs/openvla/. Falls back to "openvla" for legacy layouts.
     parts = records_path.resolve().parts
-    backend = next((p for p in parts if p in {"openvla", "openpi"}), "openvla")
+    backend = next((p for p in parts if p in {"openvla", "openpi"}), None)
+    if backend is None:
+        backend = "groot" if any(p.startswith("groot") for p in parts) else "openvla"
     return Path("logs") / backend / "keyframes" / records_path.parent.name / f"dp_{waypoint_mode}_err{threshold_tag}"
 
 

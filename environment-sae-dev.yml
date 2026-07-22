@@ -27,5 +27,19 @@ dependencies:
       - nnsight==0.3.3
       - tqdm
       - wandb
+      # AWE kinematic keyframes. Keep OpenCV pinned below 5 so pip does not
+      # upgrade the NumPy 1.26 training contract to NumPy 2.x.
+      - matplotlib==3.10.9
+      - imageio==2.37.3
+      - imageio-ffmpeg==0.6.0
+      - moviepy==2.2.1
+      - pillow==11.3.0
+      - decorator==5.2.1
+      - opencv-python==4.11.0.86
+      - opencv-python-headless==4.11.0.86
+      - mujoco==3.8.0
+      - robosuite==1.4.0
+      - termcolor==3.3.0
+      - git+https://github.com/xc-j/awe.git@7197bb86a20784666dabed90e6eabcf8bb1e9912
       # Event-SAE가 사용하는 upstream SAE 구현과 검증된 commit.
       - git+https://github.com/saprmarks/dictionary_learning.git@60ec6bf
