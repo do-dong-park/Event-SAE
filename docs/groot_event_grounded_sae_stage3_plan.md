@@ -2,7 +2,7 @@
 
 - 작성일: 2026-07-22
 - 대상: GR00T N1.5, RoboCasa PQ3
-- 상태: **원격 미디어 패키저 구현·로컬 테스트 완료, 원격 pilot 대기**
+- 상태: **10-episode media pilot 완료, canonical frame anchor 시각 선택 대기**
 - 로컬 환경: `event-sae-dev`
 - 원격 미디어 환경: `event-sae-media`
 
@@ -251,9 +251,9 @@ Frame은 연속 frame이 아니라 시간순으로 sampling한 frame임을 promp
 
 - [x] 원격 media adapter와 environment YAML 작성
 - [x] 로컬 단위·통합 test 6개 통과
-- [ ] 원격 temporal_vla working copy에 adapter 배치 후 file SHA 검증
-- [ ] 원격 `event-sae-media` 생성 및 import/decode smoke test
-- [ ] Stage 2 manifest/waypoint hash를 원격 입력에서 재검증
+- [x] 원격 temporal_vla working copy에 adapter 배치 후 file SHA 검증
+- [x] 원격 `event-sae-media` 생성 및 import/decode smoke test
+- [x] Stage 2 manifest/waypoint hash를 원격 입력에서 재검증
 
 ### Gate 1 — 10-episode frame-anchor pilot
 
@@ -271,6 +271,33 @@ pilot samples = 58
 - JPEG를 로컬로 회수한 뒤 hash와 image decode가 통과하는지
 
 Pilot bundle의 sample당 byte를 `b_pilot`이라 하면 전체 JPEG 예상량은 `913 × b_pilot`으로 외삽한다. 예상량이 로컬 여유 공간에 비해 비정상적으로 크면 full packaging 전에 JPEG quality 또는 보존 범위를 다시 정한다.
+
+#### 2026-07-22 pilot 결과
+
+| Anchor | Samples | JPEG | Frame bytes | Null anchor position | Remote/local audit |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `first` | 58 | 290 | 22,262,639 | 5 | pass / pass |
+| `center` | 58 | 290 | 22,261,573 | 5 | pass / pass |
+| `last` | 58 | 290 | 22,252,569 | 5 | pass / pass |
+
+- 세 run 모두 skip 0이며 boundary 분포는 start-shifted 6, interior 41,
+  end-shifted 11로 동일하다.
+- Sample ID와 선택된 policy record window는 세 run에서 exact match다.
+- `first → center`는 290개 frame 중 165개가 같은 video frame이고 125개가
+  1 frame 뒤다. `center → last`는 290개 모두 1 frame 뒤다.
+- Pilot에서 외삽한 913-sample full JPEG 크기는 anchor에 따라
+  350,286,129~350,444,645 bytes, 약 334 MiB다.
+- 원격 실행 환경은 Python 3.10.20, imageio 2.37.3, Pillow 11.3.0,
+  imageio-ffmpeg 0.6.0이다.
+- 원격과 로컬 bundle은 각각
+  `outputs/event_sae/groot_n15/pq3_stage3_media/pilot_<anchor>`에 있으며,
+  전송 후 manifest/audit hash가 일치한다.
+- Task별 비교 contact sheet 5장은 local
+  `outputs/event_sae/groot_n15/pq3_stage3_media/pilot_contact_sheets/`에 있다.
+
+따라서 packaging, timeline, transfer, storage gate는 통과했다. Canonical anchor는
+contact/motion 시각 정렬을 contact sheet에서 검토한 뒤 고정하며, 선택 전에는
+913-sample full packaging을 실행하지 않는다.
 
 ### Gate 2 — Full media와 embedding
 
