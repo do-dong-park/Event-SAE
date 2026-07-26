@@ -30,7 +30,7 @@ from openpi.sae_collection.collector import (
     SAECollectionConfig,
 )
 
-from event_sae.openvla.activations import load_batch_topk_sae
+from event_sae.sae import load_batch_topk_sae
 
 
 class TopKActivationCollector(ActivationCollector):

@@ -1,10 +1,10 @@
 """Audit a GR00T PQ3 BatchTopK SAE checkpoint on action-token residuals.
 
-This is intentionally a thin adapter. It reuses the PQ3 loader from
-train_sae_robocasa.py, Event-SAE's checkpoint loader, and
-dictionary_learning.evaluation.evaluate. GR00T-specific code is limited
-to source/checkpoint contract checks, deterministic sampling, per-feature
-firing statistics, and durable JSON/NPZ output.
+This cache-only adapter reuses Event-SAE's activation/checkpoint loaders and
+``dictionary_learning.evaluation.evaluate``. Raw PQ3 pickle validation belongs
+to ``export_pq3_activation_shards.py``; this audit is limited to
+source/checkpoint contract checks, deterministic sampling, per-feature firing
+statistics, and durable JSON/NPZ output.
 """
 
 from __future__ import annotations
@@ -25,17 +25,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from event_sae.openvla.activations import load_batch_topk_sae
-from scripts.groot.train_sae_robocasa import (
-    DEFAULT_ACTION_HORIZON,
-    DEFAULT_FEATURE_KIND,
-    DEFAULT_FUTURE_TOKENS,
-    DEFAULT_MODEL_TOKENS,
-    DEFAULT_STATE_TOKENS,
-    EXPECTED_PQ3_CELL_COUNTS,
-    InMemoryBatchLoader,
+from event_sae.sae import load_batch_topk_sae
+from event_sae.groot.activations import (
+    InMemoryActivationBatchLoader,
     load_activation_cache,
-    load_layer_activations,
 )
 
 
@@ -143,7 +136,14 @@ def _feature_statistics(
     device: str,
     seed: int,
 ) -> tuple[dict[str, np.ndarray], dict[str, float | int | bool]]:
-    loader = iter(InMemoryBatchLoader(activations, batch_size, device, seed))
+    loader = iter(
+        InMemoryActivationBatchLoader(
+            activations,
+            batch_size,
+            device,
+            seed,
+        )
+    )
     dict_size = int(sae.dict_size)
     firing_count = torch.zeros(dict_size, dtype=torch.int64, device=device)
     activation_sum = torch.zeros(dict_size, dtype=torch.float32, device=device)
@@ -194,24 +194,49 @@ def _feature_statistics(
     return arrays, summary
 
 
+@torch.no_grad()
+def _calibrate_inference_threshold(
+    sae,
+    activations: torch.Tensor,
+    *,
+    calibration_rows: int,
+    device: str,
+    seed: int,
+) -> tuple[float, int]:
+    evaluated_rows = min(len(activations), calibration_rows)
+    if evaluated_rows < 1:
+        raise ValueError("Threshold calibration requires at least one activation row")
+    batch = next(
+        iter(
+            InMemoryActivationBatchLoader(
+                activations,
+                evaluated_rows,
+                device,
+                seed,
+            )
+        )
+    )
+    pre_activations = torch.relu(sae.encoder(batch - sae.b_dec)).flatten()
+    target_active = min(int(sae.k.item()) * evaluated_rows, pre_activations.numel())
+    selected_minimum = torch.topk(
+        pre_activations, target_active, sorted=False
+    ).values.amin()
+    threshold = torch.nextafter(
+        selected_minimum, torch.full_like(selected_minimum, -torch.inf)
+    )
+    sae.threshold.fill_(threshold)
+    return float(threshold.item()), evaluated_rows
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--input-dir", type=Path)
-    source.add_argument("--activation-cache", type=Path)
+    parser.add_argument("--activation-cache", type=Path, required=True)
     parser.add_argument("--sae-checkpoint", type=Path, required=True)
     parser.add_argument("--source-manifest", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--feature-output", type=Path, default=None)
-    parser.add_argument("--trust-pkl", action="store_true")
     parser.add_argument("--layer", type=int, default=15)
     parser.add_argument("--activation-dim", type=int, default=1536)
-    parser.add_argument("--denoise-steps", type=int, default=4)
-    parser.add_argument("--model-tokens", type=int, default=DEFAULT_MODEL_TOKENS)
-    parser.add_argument("--state-tokens", type=int, default=DEFAULT_STATE_TOKENS)
-    parser.add_argument("--future-tokens", type=int, default=DEFAULT_FUTURE_TOKENS)
-    parser.add_argument("--action-horizon", type=int, default=DEFAULT_ACTION_HORIZON)
-    parser.add_argument("--expected-feature-kind", default=DEFAULT_FEATURE_KIND)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument(
         "--max-audit-rows",
@@ -219,64 +244,64 @@ def _build_parser() -> argparse.ArgumentParser:
         default=8192,
         help="Deterministic sampled rows; 0 uses all complete batches.",
     )
+    parser.add_argument(
+        "--recalibrate-threshold-rows",
+        type=int,
+        default=0,
+        help=(
+            "Deterministic rows used to reset the inference threshold to average "
+            "L0=k; 0 audits the threshold stored in the checkpoint."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="")
-    parser.add_argument("--max-files", type=int, default=0)
-    parser.add_argument("--allow-partial-inventory", action="store_true")
-    parser.add_argument("--progress-every", type=int, default=25)
-    parser.add_argument("--max-ram-gib", type=float, default=32.0)
     return parser
 
 
 def main() -> None:
     args = _build_parser().parse_args()
-    if args.input_dir is not None:
-        if not args.trust_pkl:
-            raise SystemExit("Refusing to load pickle files without --trust-pkl.")
-        if not args.input_dir.is_dir():
-            raise SystemExit(f"Input directory does not exist: {args.input_dir}")
-    elif args.activation_cache is None or not args.activation_cache.is_file():
+    if not args.activation_cache.is_file():
         raise SystemExit(f"Activation cache does not exist: {args.activation_cache}")
     if args.batch_size <= 0 or args.max_audit_rows < 0:
         raise SystemExit("--batch-size must be positive and --max-audit-rows must be >= 0")
+    if args.recalibrate_threshold_rows < 0:
+        raise SystemExit("--recalibrate-threshold-rows must be >= 0")
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint_path, trainer_dir, run_dir = _checkpoint_and_run_dirs(
         args.sae_checkpoint
     )
+    output_path = (
+        args.output.resolve() if args.output is not None else run_dir / "sae_quality.json"
+    )
+    feature_output_path = (
+        args.feature_output.resolve()
+        if args.feature_output is not None
+        else output_path.with_name("sae_quality_by_feature.npz")
+    )
+    if output_path == feature_output_path:
+        raise ValueError("Audit JSON and feature NPZ outputs must be different paths")
+    existing_outputs = [
+        path
+        for path in (output_path, feature_output_path)
+        if path.exists() or path.is_symlink()
+    ]
+    if existing_outputs:
+        raise FileExistsError(
+            "Refusing to overwrite existing audit output(s): "
+            + ", ".join(str(path) for path in existing_outputs)
+        )
+
     sae, checkpoint_config = load_batch_topk_sae(checkpoint_path, device=device)
     trainer_config = _validate_checkpoint_contract(
         checkpoint_config, layer=args.layer, dim=args.activation_dim
     )
 
-    if args.activation_cache is not None:
-        activations, current_source = load_activation_cache(
-            args.activation_cache,
-            layer_id=args.layer,
-            activation_dim=args.activation_dim,
-        )
-    else:
-        activations, current_source = load_layer_activations(
-            args.input_dir,
-            layer_id=args.layer,
-            activation_dim=args.activation_dim,
-            expected_denoise_steps=args.denoise_steps,
-            expected_feature_kind=args.expected_feature_kind,
-            max_files=args.max_files,
-            progress_every=args.progress_every,
-            expected_model_tokens=args.model_tokens,
-            state_tokens=args.state_tokens,
-            future_tokens=args.future_tokens,
-            action_horizon=args.action_horizon,
-            max_ram_gib=args.max_ram_gib,
-            materialize=True,
-            expected_cell_counts=(
-                None
-                if args.allow_partial_inventory or args.max_files > 0
-                else EXPECTED_PQ3_CELL_COUNTS
-            ),
-        )
-        assert activations is not None
+    activations, current_source = load_activation_cache(
+        args.activation_cache,
+        layer_id=args.layer,
+        activation_dim=args.activation_dim,
+    )
 
     source_manifest_path = (
         args.source_manifest.resolve()
@@ -285,6 +310,31 @@ def main() -> None:
     )
     stored_source = _load_json_object(source_manifest_path)
     _validate_source_identity(current_source, stored_source)
+
+    saved_threshold = float(sae.threshold.item())
+    threshold_calibration: dict[str, Any] = {
+        "mode": "checkpoint_saved_threshold",
+        "saved_threshold": saved_threshold,
+        "effective_threshold": saved_threshold,
+        "requested_rows": 0,
+        "evaluated_rows": 0,
+        "seed": args.seed,
+        "target_average_l0": int(sae.k.item()),
+    }
+    if args.recalibrate_threshold_rows > 0:
+        effective_threshold, calibration_rows = _calibrate_inference_threshold(
+            sae,
+            activations,
+            calibration_rows=args.recalibrate_threshold_rows,
+            device=device,
+            seed=args.seed,
+        )
+        threshold_calibration.update(
+            mode="deterministic_global_topk_calibration",
+            effective_threshold=effective_threshold,
+            requested_rows=args.recalibrate_threshold_rows,
+            evaluated_rows=calibration_rows,
+        )
 
     requested_rows = len(activations) if args.max_audit_rows == 0 else args.max_audit_rows
     sampled_rows = min(len(activations), requested_rows)
@@ -298,7 +348,14 @@ def main() -> None:
 
     metrics = evaluate_dictionary(
         sae,
-        iter(InMemoryBatchLoader(activations, args.batch_size, device, args.seed)),
+        iter(
+            InMemoryActivationBatchLoader(
+                activations,
+                args.batch_size,
+                device,
+                args.seed,
+            )
+        ),
         normalize_batch=False,
         device=device,
         n_batches=n_batches,
@@ -323,14 +380,6 @@ def main() -> None:
             f"{metrics['frac_alive']} != {measured_frac_alive}"
         )
 
-    output_path = (
-        args.output.resolve() if args.output is not None else run_dir / "sae_quality.json"
-    )
-    feature_output_path = (
-        args.feature_output.resolve()
-        if args.feature_output is not None
-        else output_path.with_name("sae_quality_by_feature.npz")
-    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     feature_output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(feature_output_path, **feature_arrays)
@@ -346,6 +395,7 @@ def main() -> None:
             "dict_size": int(trainer_config["dict_size"]),
             "k": int(trainer_config["k"]),
             "threshold": float(sae.threshold.item()),
+            "saved_threshold": saved_threshold,
             "submodule_name": trainer_config["submodule_name"],
         },
         "source": {
@@ -370,6 +420,7 @@ def main() -> None:
             "normalize_batch": False,
             "reason": "trainSAE rescales saved BatchTopKSAE biases for raw activations",
         },
+        "threshold_calibration": threshold_calibration,
         "metrics": {key: float(value) for key, value in metrics.items()} | custom_summary,
         "feature_stats_path": str(feature_output_path),
     }

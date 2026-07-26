@@ -2,15 +2,18 @@
 or single-feature intervention.
 
 Direct port of `openpi-event-sae/scripts/serve_policy.py`, slimmed to
-three modes:
+four modes:
+  * ``--mode baseline`` — serve the unmodified policy with no SAE hook.
   * ``--mode dense`` — dense activation collection (paper-default).
   * ``--mode topk``  — online top-k via ``event_sae.openpi.TopKActivationCollector``.
   * ``--mode intervene`` — install the fork's ``SAEReconstruction``
     hook on a single (capture_target, layer): the activation is run
     through the trained SAE, the listed ``--feature-indices`` are
     scaled by ``--feature-alpha`` (0.0 = hard zero-out, 0.5 = soft
-    half-strength, 1.0 = identity reconstruction), then decoded back
-    into the residual stream. Matches openpi-mech's
+    half-strength, 1.0 = no feature edit). The decoded feature-edit
+    delta is mixed into the original residual with ``--recon-alpha``;
+    the unedited SAE reconstruction is never substituted for the
+    residual. Matches openpi-mech's
     ``rollout_eval_openpi_sae_feature_{zeroout,soft_intervention}_*``
     sweeps.
 """
@@ -38,6 +41,11 @@ from openpi.serving import websocket_policy_server
 from openpi.training import config as _config
 
 from event_sae.openpi.activations import TopKActivationCollector
+from event_sae.openpi.eval.config import (
+    validate_intervention_layer,
+    validate_policy_override_pair,
+    validate_sae_intervention_checkpoint,
+)
 
 
 _DEFAULT_POLICY_BY_ENV = {
@@ -47,6 +55,7 @@ _DEFAULT_POLICY_BY_ENV = {
 
 def _resolve_policy_spec(args) -> tuple[_config.TrainConfig, str]:
     """Mirrors openpi-mech _resolve_policy_spec: returns (train_config, checkpoint_dir)."""
+    validate_policy_override_pair(args.config, args.checkpoint_dir)
     if args.config and args.checkpoint_dir:
         train_config = _config.get_config(args.config)
         return train_config, args.checkpoint_dir
@@ -138,7 +147,7 @@ def _make_collector(args, train_config, checkpoint_dir: str):
     return collector, sample_kwargs
 
 
-def _make_intervention(args, train_config, checkpoint_dir: str) -> dict:
+def _make_intervention(args, train_config) -> dict:
     """Install the JAX-side SAEReconstruction hook for ``--mode intervene``.
 
     Mirrors ``_make_sae_reconstruction`` in the openpi fork's
@@ -149,7 +158,6 @@ def _make_intervention(args, train_config, checkpoint_dir: str) -> dict:
     hook into ``gemma.py``. Returns the server-metadata dict the
     client sees as ``policy.metadata['sae_reconstruction']``.
     """
-    import numpy as np
     import torch
 
     if not isinstance(train_config.model, _pi0_config.Pi0Config):
@@ -157,22 +165,27 @@ def _make_intervention(args, train_config, checkpoint_dir: str) -> dict:
 
     target_variant, target_spec = _target_variant_and_spec(train_config, args.capture_target)
     target_config = _gemma.get_config(target_variant)
-    if args.layer_idx < 0 or args.layer_idx >= target_config.depth:
-        raise ValueError(
-            f"--layer-idx={args.layer_idx} outside model depth {target_config.depth} for {args.capture_target}."
-        )
+    validate_intervention_layer(
+        args.capture_target,
+        int(args.layer_idx),
+        int(target_config.depth),
+    )
 
     state_dict = torch.load(args.sae_checkpoint, map_location="cpu")
-    required = ("encoder.weight", "encoder.bias", "decoder.weight", "b_dec", "k", "threshold")
-    missing = [k for k in required if k not in state_dict]
-    if missing:
-        raise ValueError(f"SAE checkpoint {args.sae_checkpoint} missing keys: {missing}")
-
     feature_indices = _parse_int_list(args.feature_indices)
     if not feature_indices and int(args.active_feature_drop_count) <= 0:
         raise ValueError(
             "--mode intervene requires --feature-indices (or --active-feature-drop-count > 0)."
         )
+    checkpoint_contract = validate_sae_intervention_checkpoint(
+        args.sae_checkpoint,
+        capture_target=args.capture_target,
+        layer_idx=int(args.layer_idx),
+        activation_dim=int(target_config.width),
+        state_dict=state_dict,
+        feature_indices=feature_indices,
+        active_feature_drop_count=int(args.active_feature_drop_count),
+    )
 
     state = _sae_reconstruction.make_state_from_arrays(
         ae_path=args.sae_checkpoint,
@@ -198,6 +211,7 @@ def _make_intervention(args, train_config, checkpoint_dir: str) -> dict:
         "enabled": True,
         "schema_version": "openpi_sae_reconstruction_v1",
         "ae_path": args.sae_checkpoint,
+        "checkpoint_contract": checkpoint_contract,
         "capture_target": args.capture_target,
         "layer_idx": int(args.layer_idx),
         "alpha": float(args.recon_alpha),
@@ -211,45 +225,92 @@ def _make_intervention(args, train_config, checkpoint_dir: str) -> dict:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Serve openpi policy with event-grounded SAE collection.")
+    p = argparse.ArgumentParser(
+        description="Serve openpi policy with event-grounded SAE collection."
+    )
     # Policy
-    p.add_argument("--env", default="libero", choices=sorted(_DEFAULT_POLICY_BY_ENV), help="Pick a default policy for this env.")
+    p.add_argument(
+        "--env",
+        default="libero",
+        choices=sorted(_DEFAULT_POLICY_BY_ENV),
+        help="Pick a default policy for this env.",
+    )
     p.add_argument("--config", default=None, help="Override default: openpi train-config name.")
     p.add_argument("--checkpoint-dir", default=None, help="Override default: checkpoint dir.")
     p.add_argument("--default-prompt", default=None)
     p.add_argument("--port", type=int, default=8000)
     # SAE collection / intervention
-    p.add_argument("--mode", default="dense", choices=("dense", "topk", "intervene"))
+    p.add_argument(
+        "--mode",
+        default="dense",
+        choices=("baseline", "dense", "topk", "intervene"),
+    )
     p.add_argument("--output-root", default="logs/openpi/sae_collection")
     p.add_argument("--run-name", default=None)
-    p.add_argument("--capture-target", default="action_expert", choices=("action_expert", "paligemma"))
-    p.add_argument("--layer-indices", default="0,5,11,17", help="Collection: comma-separated layers. For mode=topk, exactly one layer.")
+    p.add_argument(
+        "--capture-target",
+        default="action_expert",
+        choices=("action_expert", "paligemma"),
+    )
+    p.add_argument(
+        "--layer-indices",
+        default="0,5,11,17",
+        help="Collection: comma-separated layers. For mode=topk, exactly one layer.",
+    )
     p.add_argument("--flush-every-rows", type=int, default=50_000)
     # topk + intervene shared
-    p.add_argument("--sae-checkpoint", default="", help="Path to trained SAE ae.pt. Required for mode={topk,intervene}.")
+    p.add_argument(
+        "--sae-checkpoint",
+        default="",
+        help="Path to trained SAE ae.pt. Required for mode={topk,intervene}.",
+    )
     # topk-only
     p.add_argument("--topk", type=int, default=64)
     p.add_argument("--rows-per-shard", type=int, default=20_000)
     # intervene-only
-    p.add_argument("--layer-idx", type=int, default=None, help="mode=intervene: which single layer to install the SAE recon hook on.")
+    p.add_argument(
+        "--layer-idx",
+        type=int,
+        default=None,
+        help="mode=intervene: which single layer to install the SAE recon hook on.",
+    )
     p.add_argument(
         "--feature-indices",
         default="",
-        help="mode=intervene: comma-list of SAE feature ids to perturb (e.g. '24830' or '24830,9905').",
+        help=(
+            "mode=intervene: comma-list of in-range SAE feature ids from "
+            "candidates.jsonl (e.g. '12' or '12,37')."
+        ),
     )
     p.add_argument(
         "--feature-alpha",
         type=float,
         default=0.0,
-        help="mode=intervene: target-feature scale. 0.0 = hard zero-out, 0.5 = soft half-strength, 1.0 = identity. Paper uses 0.0 + soft grid {0.25, 0.5, 0.75}.",
+        help=(
+            "mode=intervene: target-feature scale. 0.0 = hard zero-out, "
+            "0.5 = soft half-strength, 1.0 = no feature edit. "
+            "Paper uses 0.0 + soft grid {0.25, 0.5, 0.75}."
+        ),
     )
     p.add_argument(
         "--recon-alpha",
         type=float,
         default=1.0,
-        help="mode=intervene: overall reconstruction mix in the residual (h' = h + alpha * (recon - h)). 1.0 = full SAE recon, 0.0 = no edit.",
+        help=(
+            "mode=intervene: intervention-delta strength, "
+            "h' = h + alpha * (Dec(z_edited) - Dec(z)). "
+            "1.0 applies the full edit; 0.0 disables it."
+        ),
     )
-    p.add_argument("--active-feature-drop-count", type=int, default=0, help="mode=intervene: zero out the top-N active features per token (instead of fixed --feature-indices).")
+    p.add_argument(
+        "--active-feature-drop-count",
+        type=int,
+        default=0,
+        help=(
+            "mode=intervene: zero out the top-N active features per token "
+            "(instead of fixed --feature-indices)."
+        ),
+    )
     p.add_argument("--active-feature-drop-seed", type=int, default=0)
     return p
 
@@ -294,7 +355,11 @@ def _install_shutdown_handlers(collector) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
+    )
     args = _build_parser().parse_args()
     if args.mode == "topk" and not args.sae_checkpoint:
         raise SystemExit("--mode=topk requires --sae-checkpoint")
@@ -306,31 +371,32 @@ def main() -> None:
 
     train_config, checkpoint_dir = _resolve_policy_spec(args)
 
+    collector = None
+    recon_metadata = None
     if args.mode == "intervene":
-        recon_metadata = _make_intervention(args, train_config, checkpoint_dir)
-        _install_shutdown_handlers(collector=None)
+        recon_metadata = _make_intervention(args, train_config)
         sample_kwargs = None
-        policy = _policy_config.create_trained_policy(
-            train_config,
-            checkpoint_dir,
-            default_prompt=args.default_prompt,
-            sample_kwargs=sample_kwargs,
-        )
-        metadata = dict(policy.metadata)
-        metadata["sae_reconstruction"] = recon_metadata
-        logging.info("Enabled SAE reconstruction: %s", recon_metadata)
+    elif args.mode == "baseline":
+        sample_kwargs = None
     else:
         collector, sample_kwargs = _make_collector(args, train_config, checkpoint_dir)
-        _install_shutdown_handlers(collector)
-        policy = _policy_config.create_trained_policy(
-            train_config,
-            checkpoint_dir,
-            default_prompt=args.default_prompt,
-            sample_kwargs=sample_kwargs,
-        )
-        metadata = dict(policy.metadata)
+
+    _install_shutdown_handlers(collector)
+    policy = _policy_config.create_trained_policy(
+        train_config,
+        checkpoint_dir,
+        default_prompt=args.default_prompt,
+        sample_kwargs=sample_kwargs,
+    )
+    metadata = dict(policy.metadata)
+    if recon_metadata is not None:
+        metadata["sae_reconstruction"] = recon_metadata
+        logging.info("Enabled SAE reconstruction: %s", recon_metadata)
+    elif collector is not None:
         metadata["sae_collection"] = collector.server_metadata()
         logging.info("Enabled SAE collection: %s", metadata["sae_collection"])
+    else:
+        logging.info("Serving no-hook baseline policy.")
 
     server = websocket_policy_server.WebsocketPolicyServer(
         policy=policy, host="0.0.0.0", port=args.port, metadata=metadata,

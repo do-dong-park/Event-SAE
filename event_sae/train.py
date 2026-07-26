@@ -9,6 +9,7 @@ Migrated from `mechanistic-steering-vlas/src/sae_train/train.py`. Differences:
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ def _auto_device() -> str:
 @dataclass
 class SAETrainConfig:
     """Single-run config for training one BatchTopK SAE."""
+
     data_dir: str
     layer_idx: int             # Should match the layer number in shard filenames.
     activation_dim: int        # Activation width d_model (e.g., OpenVLA post-residual = 4096).
@@ -42,10 +44,29 @@ class SAETrainConfig:
     num_workers: int = 4
     prefetch_factor: int = 2
     pin_memory: bool = True
-    # TODO: add optional trainer/runtime params (warmup/decay, auxk, seed, autocast).
+    warmup_steps: int = 1000
+    decay_start_step: int | None = None  # None = floor(0.8 * steps).
+    threshold_start_step: int = 1000
+    seed: int = 0
+    save_every: int = 1500              # <= 0 disables intermediate saves.
+    log_steps: int = 500
+    normalize_activations: bool = True
+    verbose: bool = True
+    lm_name: str = "openvla_offline"
+    use_wandb_env: bool = True
 
     def resolved_device(self) -> str:
         return self.device or _auto_device()
+
+    def resolved_decay_start(self) -> int:
+        if self.decay_start_step is None:
+            return int(self.steps * 0.8)
+        return self.decay_start_step
+
+    def save_steps(self) -> list[int]:
+        if self.save_every <= 0:
+            return []
+        return list(range(self.save_every, self.steps + 1, self.save_every))
 
 
 class _ActivationShardDataset(IterableDataset):
@@ -152,23 +173,37 @@ def build_batch_topk_trainer_config(cfg: SAETrainConfig) -> dict[str, Any]:
         "k": cfg.k,
         "lr": cfg.lr,
         "steps": cfg.steps,
-        "warmup_steps": 1000,
-        "decay_start": int(cfg.steps * 0.8),
-        "seed": 0,
+        "warmup_steps": cfg.warmup_steps,
+        "decay_start": cfg.resolved_decay_start(),
+        "threshold_start_step": cfg.threshold_start_step,
+        "seed": cfg.seed,
         "device": cfg.resolved_device(),
         "layer": cfg.layer_idx,
-        "lm_name": "openvla_offline",
+        "lm_name": cfg.lm_name,
         "submodule_name": cfg.submodule_name,
         "wandb_name": f"{cfg.run_tag}-l{cfg.layer_idx:02d}",
     }
 
 
-def train_sae(cfg: SAETrainConfig, save_dir: str) -> None:
-    """Train one BatchTopK SAE run on offline activation shards."""
-    dataloader = ActivationShardDataLoader(cfg)
+def train_sae(
+    cfg: SAETrainConfig,
+    save_dir: str,
+    *,
+    data: Iterable[torch.Tensor] | None = None,
+) -> None:
+    """Train one BatchTopK SAE using the shared dictionary-learning runtime.
+
+    By default activations come from :class:`ActivationShardDataLoader`.
+    Model-specific integrations can inject any iterable of ``[batch, dim]``
+    tensors, keeping source validation and batching outside the common
+    training loop.
+    """
+
+    dataloader = data if data is not None else ActivationShardDataLoader(cfg)
     trainer_cfg = build_batch_topk_trainer_config(cfg)
-    save_steps = list(range(1500, cfg.steps + 1, 1500))
-    wandb_project = cfg.wandb_project or os.environ.get("WANDB_PROJECT", "")
+    wandb_project = cfg.wandb_project
+    if not wandb_project and cfg.use_wandb_env:
+        wandb_project = os.environ.get("WANDB_PROJECT", "")
     use_wandb = bool(wandb_project)
     if use_wandb and cfg.wandb_group:
         # Upstream `trainSAE` does not accept a `wandb_group` kwarg; wandb
@@ -179,11 +214,12 @@ def train_sae(cfg: SAETrainConfig, save_dir: str) -> None:
         trainer_configs=[trainer_cfg],
         steps=cfg.steps,
         save_dir=save_dir,
-        save_steps=save_steps,
-        log_steps=500,
-        normalize_activations=True,
+        save_steps=cfg.save_steps(),
+        log_steps=cfg.log_steps,
+        normalize_activations=cfg.normalize_activations,
         use_wandb=use_wandb,
         wandb_project=wandb_project,
-        verbose=True,
+        verbose=cfg.verbose,
+        device=cfg.resolved_device(),
         autocast_dtype=torch.float32,
     )

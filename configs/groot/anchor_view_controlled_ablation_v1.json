@@ -1,0 +1,191 @@
+{
+  "format": "event_sae_pipeline_profile_v1",
+  "profile_id": "anchor_view_controlled_ablation_v1",
+  "artifact_root": "logs/groot_n15/experiments/anchor_view_controlled_ablation_v1",
+  "source": {
+    "trajectory_records_path": "logs/groot_n15/stage2_waypoints/absolute_position/trajectory_records.jsonl",
+    "relative_trajectory_records_path": "logs/groot_n15/stage2_waypoints/relative_position/trajectory_records.jsonl",
+    "absolute_trajectory_records_path": "logs/groot_n15/stage2_waypoints/absolute_position/trajectory_records.jsonl",
+    "num_task_families": 2,
+    "num_instruction_scene_cells": 5,
+    "episodes_per_cell": 30,
+    "num_episodes": 150,
+    "num_policy_records": 12041
+  },
+  "reuse_sources": {
+    "relative_position_waypoints": "logs/groot_n15/stage2_waypoints/relative_position/dp_pos_only_err0p05/waypoint_summary.json",
+    "relative_position_features": "logs/groot_n15/stage3_event_descriptors/relative_position/siglip_base_patch16_224_mean5_v1",
+    "absolute_position_gripper_run": "logs/groot_n15/experiments/v9_abs_position_gripper_3view_action_phase_v1",
+    "absolute_position_gripper_partition": "logs/groot_n15/experiments/v9_abs_position_gripper_3view_action_phase_v1/stage3_clusters/c0_balanced_v9/c0_d0p18"
+  },
+  "waypoint": {
+    "mode": "pos_gripper_close",
+    "dp_implementation": "exact_pos_only",
+    "err_threshold": 0.05,
+    "gripper_aperture": "sum(abs(gripper_qpos))",
+    "gripper_normalization_scope": "task_description_minmax_all_source_episodes",
+    "gripper_peak_height": 0.08,
+    "gripper_peak_prominence": 0.04,
+    "gripper_min_peak_distance_records": 3,
+    "waypoint_dedup_distance_records": 2,
+    "opening_peaks": false,
+    "anchor_sets": {
+      "r_pos": {
+        "eef_position_frame": "rel",
+        "include_gripper_close": false,
+        "expected_events": 913
+      },
+      "r_pos_gripper": {
+        "eef_position_frame": "rel",
+        "include_gripper_close": true,
+        "expected_events": 1227
+      },
+      "a_pos_gripper": {
+        "eef_position_frame": "abs",
+        "include_gripper_close": true,
+        "expected_events": 1278
+      }
+    }
+  },
+  "media": {
+    "view_order": [
+      "left",
+      "right",
+      "wrist"
+    ],
+    "frames_per_view": 5,
+    "synchronization": "exact_sample_and_frame_metadata_join",
+    "layouts": {
+      "left": "single_view_left_sequence_v1",
+      "multiview": "synchronized_triptych_left_right_wrist_v1"
+    }
+  },
+  "vision": {
+    "model_name_or_path": "google/siglip-base-patch16-224",
+    "pooling": "mean_over_5_frames_per_view",
+    "per_view_normalization": "l2",
+    "multiview_fusion": "equal_view_l2_concat_v1"
+  },
+  "state": {
+    "position_frame": "abs",
+    "gripper_state_mode": "qpos_aperture_delta",
+    "feature_names": [
+      "eef_pos_abs_x",
+      "eef_pos_abs_y",
+      "eef_pos_abs_z",
+      "gripper_aperture_normalized",
+      "gripper_aperture_delta"
+    ]
+  },
+  "clustering": {
+    "scope": "task_description",
+    "algorithm": "agglomerative",
+    "metric": "cosine",
+    "linkage": "average",
+    "descriptor": "C0",
+    "weights": {
+      "vision": 1.0,
+      "state": 0.5,
+      "progress": 0.4
+    },
+    "block_normalization": "balanced",
+    "distance_threshold": 0.18,
+    "num_exemplars": 5,
+    "episode_coverage_sweep": [
+      0.3,
+      0.4,
+      0.5
+    ],
+    "annotation_min_episode_coverage": 0.3,
+    "distance_sweep_enabled": false
+  },
+  "annotation": {
+    "phase_scheme": "robocasa_action",
+    "prompt_version": "gemini_task_local_visual_event_centered_v11",
+    "model": "gemini-3.1-pro-preview",
+    "temperature": 0.0,
+    "response_mime_type": "application/json",
+    "unit": "one_label_per_raw_event_cluster",
+    "semantics": "current_state_non_monotone",
+    "hidden_inputs": [
+      "gripper_qpos",
+      "anchor_source",
+      "relative_progress",
+      "source_frame_step",
+      "oracle_event",
+      "success",
+      "failure",
+      "simulator_predicate"
+    ]
+  },
+  "conditions": [
+    {
+      "id": "rel_pos__cluster_left__label_left",
+      "partition": "p0_r_pos_left",
+      "anchor_set": "r_pos",
+      "clustering_view": "left",
+      "annotation_view": "left"
+    },
+    {
+      "id": "rel_pos__cluster_left__label_multiview",
+      "partition": "p0_r_pos_left",
+      "anchor_set": "r_pos",
+      "clustering_view": "left",
+      "annotation_view": "multiview"
+    },
+    {
+      "id": "rel_pos__cluster_multiview__label_multiview",
+      "partition": "p1_r_pos_3view",
+      "anchor_set": "r_pos",
+      "clustering_view": "multiview",
+      "annotation_view": "multiview"
+    },
+    {
+      "id": "rel_pos_gripper__cluster_multiview__label_multiview",
+      "partition": "p2_r_pos_gripper_3view",
+      "anchor_set": "r_pos_gripper",
+      "clustering_view": "multiview",
+      "annotation_view": "multiview"
+    },
+    {
+      "id": "abs_pos_gripper__cluster_multiview__label_multiview",
+      "partition": "p3_a_pos_gripper_3view",
+      "anchor_set": "a_pos_gripper",
+      "clustering_view": "multiview",
+      "annotation_view": "multiview"
+    }
+  ],
+  "phase_group": {
+    "key": [
+      "task_description",
+      "reviewed_phase"
+    ],
+    "mapping": "many_raw_clusters_to_one_phase_group",
+    "requires_human_review": true,
+    "preserve_raw_clusters": true,
+    "cross_instruction_merge": false
+  },
+  "stage4": {
+    "window_size": 5,
+    "event_step_scale": 5,
+    "top_k": 5,
+    "ranking_min_coverage": 0.0,
+    "selected_topk_run_dir": null,
+    "selection_required_before_gate6": true,
+    "candidate_topk_run_dirs": [
+      "logs/groot_n15/stage4_feature_ranking/l15_sae1p2k_exec5_mean4_top96_v1/topk",
+      "logs/groot_n15/stage4_feature_ranking/l15_sae10k_exec5_mean4_top96_v1/topk",
+      "logs/groot_n15/stage4_feature_ranking/l15_sae10k_bs8192_exec5_mean4_top96_v1/topk"
+    ],
+    "reuse_contract": "reuse_sparse_topk_shards_only_rebuild_reviewed_phase_group_scores"
+  },
+  "readiness": {
+    "status": "gate0_pending",
+    "supported_r_pos_gripper_reuse": "reuse_913_r_pos_samples_and_materialize_314_gripper_only_samples",
+    "blockers": [
+      "select_one_stage4_topk_run_dir",
+      "implement_or_audit_non_overwriting_annotation_attempt_merge"
+    ],
+    "optional_optimization_not_required": "multi_source_sparse_reuse_for_1217_of_1227_r_pos_gripper_samples"
+  }
+}

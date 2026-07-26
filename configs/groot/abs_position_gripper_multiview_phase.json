@@ -1,0 +1,112 @@
+{
+  "format": "event_sae_pipeline_profile_v1",
+  "profile_id": "v9_abs_gripper_3view_actionphase_v1",
+  "paper_reference_profile": "paper_reference",
+  "source": {
+    "trajectory_records_path": "logs/groot_n15/stage2_waypoints/absolute_position/trajectory_records.jsonl",
+    "num_episodes": 150
+  },
+  "waypoint": {
+    "output_dir": "logs/groot_n15/experiments/v9_abs_position_gripper_3view_action_phase_v1/stage2_waypoints",
+    "mode": "pos_gripper_close",
+    "eef_position_frame": "abs",
+    "dp_implementation": "exact_pos_only",
+    "err_threshold": 0.05,
+    "gripper_aperture": "sum(abs(gripper_qpos))",
+    "gripper_normalization_scope": "task_description_minmax_all_source_episodes",
+    "gripper_peak_height": 0.08,
+    "gripper_peak_prominence": 0.04,
+    "gripper_min_peak_distance_records": 3,
+    "waypoint_dedup_distance_records": 2,
+    "anchor_sources": [
+      "position",
+      "gripper_close",
+      "both"
+    ]
+  },
+  "media": {
+    "view_order": [
+      "left",
+      "right",
+      "wrist"
+    ],
+    "display_layout": "LEFT | RIGHT | WRIST",
+    "frames_per_view": 5,
+    "synchronization": "exact_sample_and_frame_metadata_join"
+  },
+  "vision": {
+    "model_name_or_path": "google/siglip-base-patch16-224",
+    "pooling": "mean_over_5_frames_per_view",
+    "fusion": "equal_view_l2_concat_v1"
+  },
+  "state": {
+    "position_frame": "abs",
+    "gripper_state_mode": "qpos_aperture_delta",
+    "feature_names": [
+      "eef_pos_abs_x",
+      "eef_pos_abs_y",
+      "eef_pos_abs_z",
+      "gripper_aperture_normalized",
+      "gripper_aperture_delta"
+    ]
+  },
+  "clustering": {
+    "scope": "task_description",
+    "algorithm": "agglomerative",
+    "metric": "cosine",
+    "linkage": "average",
+    "descriptor": "C0",
+    "weights": {
+      "vision": 1.0,
+      "state": 0.5,
+      "progress": 0.4
+    },
+    "block_normalization": "balanced",
+    "distance_thresholds": [
+      0.12,
+      0.15,
+      0.18,
+      0.21,
+      0.24
+    ],
+    "episode_coverage_sweep": [
+      0.3,
+      0.4,
+      0.5
+    ],
+    "annotation_min_episode_coverage": 0.3,
+    "paper_reference_episode_coverage": 0.5
+  },
+  "annotation": {
+    "prompt_version": "gemini_task_local_visual_event_centered_v11",
+    "unit": "one_label_per_raw_event_cluster",
+    "phase_labeler_repo": "pkt_ws/temporal_vla",
+    "phase_labeler_commit": "ea61d24ac312b555ca3bcc6f668463ae8f540f7b",
+    "semantics": "current_state_non_monotone",
+    "hidden_inputs": [
+      "gripper_qpos",
+      "anchor_source",
+      "relative_progress",
+      "source_frame_step",
+      "oracle_event",
+      "success",
+      "failure",
+      "simulator_predicate"
+    ]
+  },
+  "phase_group": {
+    "key": [
+      "task_description",
+      "reviewed_phase"
+    ],
+    "mapping": "many_raw_clusters_to_one_phase_group",
+    "requires_human_review": true,
+    "preserve_raw_clusters": true,
+    "cross_instruction_merge": false
+  },
+  "excluded_from_v1": [
+    "eef_quaternion",
+    "opening_peak",
+    "oracle_label_as_clustering_input"
+  ]
+}
