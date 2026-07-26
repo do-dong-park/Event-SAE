@@ -23,7 +23,7 @@ server:
 env:
   task_suite_name: libero_spatial
   task_ids: null            # null = all 10 tasks; otherwise a list, e.g. [0,1]
-  num_trials_per_task: 50
+  num_trials_per_task: 50   # paper scale; the public minimal runbook overrides this to 5
   num_steps_wait: 10
   seed: 7
 

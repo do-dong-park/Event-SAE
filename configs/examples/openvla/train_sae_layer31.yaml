@@ -1,5 +1,5 @@
 # Example: train one BatchTopK SAE on layer-31 openVLA residual activations
-# previously collected by `scripts/collect_activations.py`.
+# previously collected by `scripts/openvla/collect_activations.py`.
 
 data_dir: logs/openvla/EVAL-libero_spatial-openvla-DATE_TIME/sae_activations/post_mlp_residual
 layer_idx: 31
@@ -11,8 +11,9 @@ activation_dim: 4096
 dict_size: 32768
 k: 64
 
-lr: 1.0e-4
-steps: 15000     # paper Table tab:hparams-sae: 15k for OpenVLA
+# Paper Appendix A / Table 5: OpenVLA uses lr=5e-5 for 4k steps.
+lr: 5.0e-5
+steps: 4000
 batch_size: 40000
 
 run_tag: libero_spatial
