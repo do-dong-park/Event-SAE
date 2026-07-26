@@ -35,7 +35,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from event_sae.openvla.activations import load_batch_topk_sae
+from event_sae.sae import load_batch_topk_sae
 
 
 def _load_index(index_path: Path, layer_idx: int) -> dict[str, list[dict]]:
@@ -52,6 +52,46 @@ def _load_index(index_path: Path, layer_idx: int) -> dict[str, list[dict]]:
     for records in by_shard.values():
         records.sort(key=lambda r: int(r["row_start"]))
     return by_shard
+
+
+def _validate_row_spans(
+    records: list[dict],
+    *,
+    num_rows: int,
+    shard_path: Path,
+) -> None:
+    """Require index rows to partition a dense shard exactly once."""
+
+    expected_start = 0
+    for record in records:
+        row_start = int(record["row_start"])
+        row_end = int(record["row_end"])
+        if row_start != expected_start:
+            relation = "overlap" if row_start < expected_start else "gap"
+            raise ValueError(
+                f"{shard_path}: activation index {relation} at row {expected_start}"
+            )
+        if row_end <= row_start or row_end > num_rows:
+            raise ValueError(
+                f"{shard_path}: invalid activation index span "
+                f"[{row_start}, {row_end}) for {num_rows} rows"
+            )
+        expected_start = row_end
+    if expected_start != num_rows:
+        raise ValueError(
+            f"{shard_path}: activation index covers [0, {expected_start}), "
+            f"expected [0, {num_rows})"
+        )
+
+
+def _load_dense_shard(path: Path, activation_dim: int) -> torch.Tensor:
+    dense = torch.load(path, map_location="cpu").to(torch.float32)
+    if dense.ndim != 2 or int(dense.shape[1]) != activation_dim:
+        raise ValueError(
+            f"Unexpected dense shard shape {tuple(dense.shape)} in {path}; "
+            f"expected (N, {activation_dim})"
+        )
+    return dense
 
 
 def main() -> None:
@@ -87,7 +127,8 @@ def main() -> None:
         if args.output_dir is not None
         else (dense_dir / "topk_activations").resolve()
     )
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if output_dir.exists():
+        raise FileExistsError(f"Refusing to overwrite existing output: {output_dir}")
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     sae, config = load_batch_topk_sae(Path(args.sae_checkpoint), device=device)
@@ -100,6 +141,21 @@ def main() -> None:
     index = _load_index(index_path, layer_idx=args.layer_idx)
     if not index:
         raise RuntimeError(f"No index records found for layer {args.layer_idx} in {index_path}")
+
+    # Validate every dense shard and its exact index partition before creating
+    # output, so a late gap/overlap cannot leave a mixed partial run.
+    for src_shard_name, records in sorted(index.items()):
+        src_shard_path = dense_dir / src_shard_name
+        if not src_shard_path.is_file():
+            raise FileNotFoundError(f"Missing dense shard: {src_shard_path}")
+        dense = _load_dense_shard(src_shard_path, activation_dim)
+        _validate_row_spans(
+            records,
+            num_rows=int(dense.shape[0]),
+            shard_path=src_shard_path,
+        )
+        del dense
+    output_dir.mkdir(parents=True)
 
     # Probe a record for OpenPI-specific fields. ``capture_target`` and
     # ``executed_chunk_len`` propagate to the manifest so the scorer can
@@ -134,12 +190,7 @@ def main() -> None:
         src_shard_path = dense_dir / src_shard_name
         if not src_shard_path.is_file():
             raise FileNotFoundError(f"Missing dense shard: {src_shard_path}")
-        dense = torch.load(src_shard_path, map_location="cpu").to(torch.float32)
-        if dense.ndim != 2 or int(dense.shape[1]) != activation_dim:
-            raise ValueError(
-                f"Unexpected dense shard shape {tuple(dense.shape)} in {src_shard_path}; "
-                f"expected (N, {activation_dim})"
-            )
+        dense = _load_dense_shard(src_shard_path, activation_dim)
         records = index[src_shard_name]
         n_rows = int(dense.shape[0])
 
@@ -154,27 +205,34 @@ def main() -> None:
         chunk_start_step = torch.full((n_rows,), -1, dtype=torch.int64)
         executed_chunk_len = torch.full((n_rows,), -1, dtype=torch.int64)
         for record in records:
-            r0, r1 = int(record["row_start"]), int(record["row_end"])
-            episode_num[r0:r1] = int(record.get("episode_num") or 0)
-            global_forward_idx[r0:r1] = int(record.get("global_forward_idx") or 0)
+            row_start = int(record["row_start"])
+            row_end = int(record["row_end"])
+            episode_num[row_start:row_end] = int(record.get("episode_num") or 0)
+            global_forward_idx[row_start:row_end] = int(
+                record.get("global_forward_idx") or 0
+            )
             # Per-token env-step mapping. OpenPI records each forward as one
             # chunked inference covering `seq_len` future tokens; the env step
             # a token corresponds to is `chunk_start + token_idx`. OpenVLA
             # records each forward as one env-step (no chunking), and all
             # rows of a record share the same `step_in_episode`. Matches
             # openpi-mech's `step_mapping="action_executed"` semantics.
-            tokens_local = torch.arange(r1 - r0, dtype=torch.int64)
-            token_idx[r0:r1] = tokens_local
+            tokens_local = torch.arange(row_end - row_start, dtype=torch.int64)
+            token_idx[row_start:row_end] = tokens_local
             chunk_start = record.get("chunk_start_step")
             if chunk_start is None:
                 chunk_start = record.get("action_chunk_start_step")
             if chunk_start is not None:
-                chunk_start_step[r0:r1] = int(chunk_start)
-                step_in_episode[r0:r1] = int(chunk_start) + tokens_local
+                chunk_start_step[row_start:row_end] = int(chunk_start)
+                step_in_episode[row_start:row_end] = int(chunk_start) + tokens_local
             else:
-                step_in_episode[r0:r1] = int(record.get("step_in_episode") or 0)
+                step_in_episode[row_start:row_end] = int(
+                    record.get("step_in_episode") or 0
+                )
             if record.get("executed_chunk_len") is not None:
-                executed_chunk_len[r0:r1] = int(record["executed_chunk_len"])
+                executed_chunk_len[row_start:row_end] = int(
+                    record["executed_chunk_len"]
+                )
 
         with torch.no_grad():
             encoded = sae.encode(dense.to(device))

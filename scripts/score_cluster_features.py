@@ -40,6 +40,15 @@ def main() -> None:
     )
     parser.add_argument("--output-path", required=True, help="Where to save the score matrix .pt payload")
     parser.add_argument("--window-size", type=int, default=5, help="Half-window size in env steps (default: 5)")
+    parser.add_argument(
+        "--event-step-scale",
+        type=int,
+        default=1,
+        help=(
+            "Multiply event waypoint_step and num_steps by this factor before windowing. "
+            "GR00T PQ3 uses 5 to map policy-record indices to executed env steps."
+        ),
+    )
     parser.add_argument("--top-n", type=int, default=20, help="Top-N features to summarize per row (default: 20)")
     parser.add_argument(
         "--step-mapping",
@@ -63,6 +72,7 @@ def main() -> None:
         window_size=args.window_size,
         top_n=args.top_n,
         step_mapping=args.step_mapping,
+        event_step_scale=args.event_step_scale,
         prompt_records_path=Path(args.prompt_records_path) if args.prompt_records_path else None,
     )
     print(json.dumps(summary, indent=2))

@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from event_sae.events.io import write_jsonl
 from event_sae.scoring.rankings import (
     event_aligned_suite_top_k,
     event_aligned_top_features_per_row,
@@ -27,13 +28,6 @@ from event_sae.scoring.rankings import (
     window_mean_suite_top_k,
     window_mean_top_features_per_row,
 )
-
-
-def _write_jsonl(path: Path, rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row) + "\n")
 
 
 def main() -> None:
@@ -53,8 +47,13 @@ def main() -> None:
         default=20,
         help="Per-row/per-task top-N for the informational JSONL outputs. Default: 20.",
     )
-    ap.add_argument("--action-dim", type=int, default=7)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--step-mapping",
+        choices=("auto", "action_executed", "chunk_executed", "inference_step"),
+        default="auto",
+        help="Mapping used to define the random-alive feature population.",
+    )
     ap.add_argument(
         "--min-coverage",
         type=float,
@@ -69,6 +68,8 @@ def main() -> None:
     args = ap.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise FileExistsError(f"Refusing to overwrite non-empty output: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("[1/4] event_aligned …", flush=True)
@@ -76,14 +77,11 @@ def main() -> None:
     ea_suite = event_aligned_suite_top_k(
         Path(args.scores_pt), args.top_k, min_coverage=args.min_coverage
     )
-    _write_jsonl(output_dir / "event_aligned.jsonl", ea_rows)
+    write_jsonl(output_dir / "event_aligned.jsonl", ea_rows)
 
     print("[2/4] window_mean …", flush=True)
-    # window_mean / task_mean now read pre-computed matrices from the
-    # score artifact (matrix_window_mean / matrix_task_mean). The
-    # `topk_run_dir` / `prompt_records_path` / `action_dim` args are
-    # threaded through for backward compat with the legacy "iterate
-    # shards at ranking time" code path, but are not consumed.
+    # window_mean / task_mean read their pre-computed score-artifact matrices;
+    # only random_alive scans topk_run_dir below.
     wm_rows = window_mean_top_features_per_row(
         scores_pt_path=Path(args.scores_pt),
         top_n=args.top_n_per_row,
@@ -93,7 +91,7 @@ def main() -> None:
         top_k=args.top_k,
         min_coverage=args.min_coverage,
     )
-    _write_jsonl(output_dir / "window_mean.jsonl", wm_rows)
+    write_jsonl(output_dir / "window_mean.jsonl", wm_rows)
 
     print("[3/4] task_mean …", flush=True)
     tm_rows = task_mean_top_features_per_task(
@@ -105,7 +103,7 @@ def main() -> None:
         top_k=args.top_k,
         min_coverage=args.min_coverage,
     )
-    _write_jsonl(output_dir / "task_mean.jsonl", tm_rows)
+    write_jsonl(output_dir / "task_mean.jsonl", tm_rows)
 
     informed_ids: set[int] = set()
     for pairs in (ea_suite, wm_suite, tm_suite):
@@ -117,9 +115,10 @@ def main() -> None:
         num_features=args.top_k,
         exclude_feature_ids=informed_ids,
         seed=args.seed,
+        step_mapping=args.step_mapping,
     )
     random_rows = [{"ranking": "random_alive", "feature_id": int(fid)} for fid in random_ids]
-    _write_jsonl(output_dir / "random_alive.jsonl", random_rows)
+    write_jsonl(output_dir / "random_alive.jsonl", random_rows)
 
     candidates: list[dict] = []
     for rank, pair in enumerate(ea_suite):
@@ -131,7 +130,23 @@ def main() -> None:
     for rank, fid in enumerate(random_ids):
         candidates.append({"ranking": "random_alive", "rank": rank + 1, "feature_id": int(fid), "score": 0.0})
     candidates_path = output_dir / "candidates.jsonl"
-    _write_jsonl(candidates_path, candidates)
+    write_jsonl(candidates_path, candidates)
+    (output_dir / "ranking_config.json").write_text(
+        json.dumps(
+            {
+                "scores_pt": str(Path(args.scores_pt).resolve()),
+                "topk_run_dir": str(Path(args.topk_run_dir).resolve()),
+                "top_k": args.top_k,
+                "top_n_per_row": args.top_n_per_row,
+                "min_coverage": args.min_coverage,
+                "seed": args.seed,
+                "step_mapping": args.step_mapping,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     print(
         json.dumps(
