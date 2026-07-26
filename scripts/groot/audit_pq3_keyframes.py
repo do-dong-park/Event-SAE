@@ -14,7 +14,11 @@ import numpy as np
 AUDIT_FORMAT = "groot_n15_pq3_waypoint_audit_v1"
 
 
-def _load_records(path: Path) -> dict[int, dict[str, Any]]:
+def _load_records(
+    path: Path,
+    *,
+    eef_position_frame: str,
+) -> dict[int, dict[str, Any]]:
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     with path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, 1):
@@ -29,16 +33,37 @@ def _load_records(path: Path) -> dict[int, dict[str, Any]]:
         steps = [int(item["step_in_episode"]) for item in records]
         if steps != list(range(len(records))):
             raise ValueError(f"episode {episode_num}: non-contiguous steps")
+        if eef_position_frame == "rel":
+            position_candidates = ("eef_pos_rel", "eef_pos")
+        elif eef_position_frame == "abs":
+            position_candidates = ("eef_pos_abs",)
+        else:
+            raise ValueError(
+                f"Unsupported eef_position_frame={eef_position_frame!r}"
+            )
+        position_key = next(
+            (
+                key
+                for key in position_candidates
+                if all(key in item for item in records)
+            ),
+            None,
+        )
+        if position_key is None:
+            raise ValueError(
+                f"episode {episode_num}: missing {eef_position_frame!r} EEF positions"
+            )
         positions = np.asarray(
-            [item["eef_pos"] for item in records],
+            [item[position_key] for item in records],
             dtype=np.float64,
         )
         if positions.ndim != 2 or positions.shape[1] != 3:
             raise ValueError(
-                f"episode {episode_num}: eef_pos shape={positions.shape}, expected [T,3]"
+                f"episode {episode_num}: {position_key} shape={positions.shape}, "
+                "expected [T,3]"
             )
         if not np.isfinite(positions).all():
-            raise ValueError(f"episode {episode_num}: non-finite eef_pos")
+            raise ValueError(f"episode {episode_num}: non-finite {position_key}")
         first = records[0]
         episodes[episode_num] = {
             "positions": positions,
@@ -91,7 +116,7 @@ def _discover_summaries(
         paths.extend(
             path.resolve()
             for path in waypoint_root.resolve().glob(
-                "dp_pos_only_err*/waypoint_summary.json"
+                "dp_pos_only*_err*/waypoint_summary.json"
             )
         )
     unique = sorted(set(paths))
@@ -166,12 +191,29 @@ def _episode_metrics(
     waypoint_indices = [
         int(index) for index in summary_episode.get("waypoint_indices", [])
     ]
+    position_waypoint_indices = [
+        int(index)
+        for index in summary_episode.get(
+            "position_waypoint_indices",
+            waypoint_indices,
+        )
+    ]
     if waypoint_indices != sorted(waypoint_indices):
         raise ValueError(f"episode {episode_num}: waypoint indices are not ascending")
     if len(waypoint_indices) != len(set(waypoint_indices)):
         raise ValueError(f"episode {episode_num}: duplicate waypoint indices")
     if any(index < 0 or index >= num_steps for index in waypoint_indices):
         raise ValueError(f"episode {episode_num}: waypoint index out of range")
+    if position_waypoint_indices != sorted(position_waypoint_indices):
+        raise ValueError(
+            f"episode {episode_num}: position waypoint indices are not ascending"
+        )
+    if len(position_waypoint_indices) != len(set(position_waypoint_indices)):
+        raise ValueError(f"episode {episode_num}: duplicate position waypoint indices")
+    if any(index not in set(waypoint_indices) for index in position_waypoint_indices):
+        raise ValueError(
+            f"episode {episode_num}: position waypoints are not a subset of candidates"
+        )
     if int(summary_episode["num_steps"]) != num_steps:
         raise ValueError(f"episode {episode_num}: num_steps mismatch")
     if int(summary_episode["num_waypoints"]) != len(waypoint_indices):
@@ -194,12 +236,12 @@ def _episode_metrics(
 
     reconstructed, interpolation_anchors = _reconstruct_positions(
         positions,
-        waypoint_indices,
+        position_waypoint_indices,
     )
     per_step_error = np.linalg.norm(positions - reconstructed, axis=1)
     awe_geometric_error = _awe_geometric_errors(
         positions,
-        waypoint_indices,
+        position_waypoint_indices,
     )
     event_matches = [
         min((abs(event - waypoint) for waypoint in waypoint_indices), default=None)
@@ -210,6 +252,7 @@ def _episode_metrics(
         for distance in event_matches
     )
     num_waypoints = len(waypoint_indices)
+    num_position_waypoints = len(position_waypoint_indices)
     return {
         "episode_num": episode_num,
         "task_id": source["task_id"],
@@ -219,7 +262,9 @@ def _episode_metrics(
         "success": source["success"],
         "num_steps": num_steps,
         "num_waypoints": num_waypoints,
+        "num_position_waypoints": num_position_waypoints,
         "waypoint_density": num_waypoints / num_steps,
+        "position_waypoint_density": num_position_waypoints / num_steps,
         "compression_factor": (
             num_steps / num_waypoints if num_waypoints > 0 else None
         ),
@@ -231,14 +276,15 @@ def _episode_metrics(
             np.max(awe_geometric_error) < err_threshold + 1e-9
         ),
         "starts_at_first_record": bool(
-            waypoint_indices and waypoint_indices[0] == 0
+            position_waypoint_indices and position_waypoint_indices[0] == 0
         ),
         "ends_at_last_record": bool(
-            waypoint_indices and waypoint_indices[-1] == num_steps - 1
+            position_waypoint_indices
+            and position_waypoint_indices[-1] == num_steps - 1
         ),
         "interpolation_anchors": interpolation_anchors,
         "implicit_boundary_count": len(
-            set(interpolation_anchors) - set(waypoint_indices)
+            set(interpolation_anchors) - set(position_waypoint_indices)
         ),
         "num_reference_events": len(reference_events),
         "num_matched_events": matched_events,
@@ -265,6 +311,10 @@ def _aggregate(run_episodes: list[dict[str, Any]]) -> dict[str, Any]:
         [episode["num_waypoints"] for episode in run_episodes],
         dtype=np.float64,
     )
+    position_waypoint_counts = np.asarray(
+        [episode["num_position_waypoints"] for episode in run_episodes],
+        dtype=np.float64,
+    )
     compression_factors = np.asarray(
         [episode["compression_factor"] for episode in run_episodes],
         dtype=np.float64,
@@ -278,6 +328,7 @@ def _aggregate(run_episodes: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "num_episodes": len(run_episodes),
         "total_waypoints": int(np.sum(waypoint_counts)),
+        "total_position_waypoints": int(np.sum(position_waypoint_counts)),
         "mean_waypoints": float(np.mean(waypoint_counts)),
         "median_waypoints": float(np.median(waypoint_counts)),
         "mean_waypoint_density": float(np.mean(densities)),
@@ -303,23 +354,40 @@ def _aggregate(run_episodes: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
+    output_path = args.output.resolve()
+    if output_path.exists() or output_path.is_symlink():
+        raise FileExistsError(f"Refusing to overwrite existing output: {output_path}")
+
     records_path = args.trajectory_records_path.resolve()
     manifest_path = (
         args.trajectory_manifest.resolve()
         if args.trajectory_manifest is not None
         else None
     )
-    source_episodes = _load_records(records_path)
     reference_events = _load_manifest_events(manifest_path)
     summary_paths = _discover_summaries(
         args.waypoint_root,
         args.waypoint_summary,
     )
+    summaries = [(path, _load_summary(path)) for path in summary_paths]
+    position_frames = {
+        str(summary.get("eef_position_frame", "rel"))
+        for _, summary in summaries
+    }
+    if len(position_frames) != 1:
+        raise ValueError(
+            "Audit rel and abs waypoint summaries separately; found frames="
+            f"{sorted(position_frames)}"
+        )
+    eef_position_frame = next(iter(position_frames))
+    source_episodes = _load_records(
+        records_path,
+        eef_position_frame=eef_position_frame,
+    )
 
     runs: list[dict[str, Any]] = []
     counts_by_run: list[tuple[float, dict[int, int]]] = []
-    for summary_path in summary_paths:
-        summary = _load_summary(summary_path)
+    for summary_path, summary in summaries:
         summary_episodes: dict[int, dict[str, Any]] = {}
         for episode in summary["episodes"]:
             episode_num = int(episode["episode_num"])
@@ -351,7 +419,7 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
             (
                 threshold,
                 {
-                    episode["episode_num"]: episode["num_waypoints"]
+                    episode["episode_num"]: episode["num_position_waypoints"]
                     for episode in run_episodes
                 },
             )
@@ -360,6 +428,7 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "waypoint_summary_path": str(summary_path),
                 "waypoint_mode": str(summary.get("waypoint_mode", "")),
+                "eef_position_frame": eef_position_frame,
                 "dp_implementation": str(summary.get("dp_implementation", "awe")),
                 "err_threshold": threshold,
                 "aggregate": _aggregate(run_episodes),
@@ -389,6 +458,7 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
     report = {
         "format": AUDIT_FORMAT,
         "trajectory_records_path": str(records_path),
+        "eef_position_frame": eef_position_frame,
         "trajectory_manifest_path": (
             str(manifest_path) if manifest_path is not None else None
         ),
@@ -397,7 +467,7 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
         "runs": runs,
         "threshold_monotonicity": {
             "definition": (
-                "waypoint count must be non-increasing as err_threshold increases"
+                "position waypoint count must be non-increasing as err_threshold increases"
             ),
             "passed": not monotonic_violations,
             "num_violations": len(monotonic_violations),
@@ -405,18 +475,18 @@ def audit_waypoints(args: argparse.Namespace) -> dict[str, Any]:
         },
         "integrity_audit_passed": True,
         "threshold_contract": {
-            "definition": "every episode must have awe_geometric_max_error < err_threshold",
+            "definition": "position waypoints must satisfy awe_geometric_max_error < err_threshold",
             "passed": total_threshold_violations == 0,
             "num_violations": total_threshold_violations,
         },
         "reconstruction_note": (
-            "RMSE/max_error use time-indexed linear interpolation. AWE threshold "
-            "checks use point-to-line-segment distance and are reported as "
-            "awe_geometric_* metrics. Both prepend the implicit first record "
-            "anchor when AWE does not report it."
+            "RMSE/max_error and the AWE threshold use position_waypoint_indices "
+            "when present; merged waypoint_indices remain the event-recall candidates. "
+            "AWE checks use point-to-line-segment distance and are reported as "
+            "awe_geometric_* metrics. Reconstruction prepends the implicit first "
+            "record anchor when AWE does not report it."
         ),
     }
-    output_path = args.output.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
@@ -448,7 +518,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--waypoint-root",
         type=Path,
         default=None,
-        help="Root containing dp_pos_only_err*/waypoint_summary.json",
+        help=(
+            "Root containing dp_pos_only*_err*/waypoint_summary.json. Do not "
+            "mix rel and abs summaries in one audit."
+        ),
     )
     parser.add_argument(
         "--waypoint-summary",

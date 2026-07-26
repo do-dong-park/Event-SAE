@@ -15,16 +15,21 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from event_sae.keyframes import (
-    EpisodeTrajectory,
-    extract_waypoints_dp,
     filter_episodes,
     gripper_toggle_indices,
     load_episode_trajectories,
     require_geometric_gripper_inputs,
+    require_gripper_qpos_inputs,
+    select_waypoint_anchors,
 )
 
 
-def _default_output_dir(records_path: Path, err_threshold: float, waypoint_mode: str) -> Path:
+def _default_output_dir(
+    records_path: Path,
+    err_threshold: float,
+    waypoint_mode: str,
+    eef_position_frame: str,
+) -> Path:
     threshold_tag = f"{err_threshold:.4f}".rstrip("0").rstrip(".").replace(".", "p")
     # Pick the backend bucket from the source path so OpenPI runs do not
     # land under logs/openvla/. Falls back to "openvla" for legacy layouts.
@@ -32,7 +37,14 @@ def _default_output_dir(records_path: Path, err_threshold: float, waypoint_mode:
     backend = next((p for p in parts if p in {"openvla", "openpi"}), None)
     if backend is None:
         backend = "groot" if any(p.startswith("groot") for p in parts) else "openvla"
-    return Path("logs") / backend / "keyframes" / records_path.parent.name / f"dp_{waypoint_mode}_err{threshold_tag}"
+    frame_tag = "" if eef_position_frame == "rel" else f"_{eef_position_frame}"
+    return (
+        Path("logs")
+        / backend
+        / "keyframes"
+        / records_path.parent.name
+        / f"dp_{waypoint_mode}{frame_tag}_err{threshold_tag}"
+    )
 
 
 def main() -> None:
@@ -41,10 +53,24 @@ def main() -> None:
     parser.add_argument("--output-dir", default=None, help="Output directory (default: derived from records path)")
     parser.add_argument(
         "--waypoint-mode",
-        choices=("pos_only", "geometric_gripper"),
+        choices=("pos_only", "pos_gripper_close", "geometric_gripper"),
         default="pos_only",
-        help="'geometric_gripper' requires eef_quat + gripper_action in records",
+        help=(
+            "'pos_gripper_close' unions position waypoints with qpos closing peaks; "
+            "'geometric_gripper' requires eef_quat + gripper_action"
+        ),
     )
+    parser.add_argument(
+        "--eef-position-frame",
+        choices=("rel", "abs"),
+        default="rel",
+        help=(
+            "EEF position coordinates used by waypoint selection. rel preserves "
+            "the existing base-relative behavior; abs uses reconstructed world "
+            "positions and requires a dual-frame PQ3 trajectory export."
+        ),
+    )
+
     parser.add_argument("--err-threshold", type=float, default=0.05, help="AWE error threshold")
     parser.add_argument(
         "--dp-implementation",
@@ -54,6 +80,30 @@ def main() -> None:
             "DP implementation. exact_pos_only enforces AWE's geometric threshold "
             "on every contiguous segment; awe preserves the upstream implementation."
         ),
+    )
+    parser.add_argument(
+        "--gripper-peak-height",
+        type=float,
+        default=0.08,
+        help="Minimum task-normalized closing velocity peak height",
+    )
+    parser.add_argument(
+        "--gripper-peak-prominence",
+        type=float,
+        default=0.04,
+        help="Minimum task-normalized closing peak prominence",
+    )
+    parser.add_argument(
+        "--gripper-min-peak-distance",
+        type=int,
+        default=3,
+        help="Minimum distance between closing peaks in policy records",
+    )
+    parser.add_argument(
+        "--waypoint-dedup-distance",
+        type=int,
+        default=2,
+        help="Merge closing peaks within this many records of a position waypoint",
     )
     parser.add_argument(
         "--success-filter", choices=("all", "success", "failure"), default="all"
@@ -67,7 +117,10 @@ def main() -> None:
     if not records_path.is_file():
         raise FileNotFoundError(f"trajectory_records.jsonl not found: {records_path}")
 
-    episodes = load_episode_trajectories(records_path)
+    episodes = load_episode_trajectories(
+        records_path,
+        eef_position_frame=args.eef_position_frame,
+    )
     selected = filter_episodes(
         episodes,
         success_filter=args.success_filter,
@@ -78,24 +131,43 @@ def main() -> None:
         raise ValueError("No episodes matched the requested filters.")
     if args.waypoint_mode == "geometric_gripper":
         require_geometric_gripper_inputs(selected)
-    if args.dp_implementation == "exact_pos_only" and args.waypoint_mode != "pos_only":
+    elif args.waypoint_mode == "pos_gripper_close":
+        require_gripper_qpos_inputs(selected)
+    if args.dp_implementation == "exact_pos_only" and args.waypoint_mode == "geometric_gripper":
         raise ValueError(
-            "--dp-implementation exact_pos_only requires --waypoint-mode pos_only"
+            "--dp-implementation exact_pos_only requires a position-only base mode"
         )
 
     output_dir = (
         Path(args.output_dir).resolve()
         if args.output_dir is not None
-        else _default_output_dir(records_path, args.err_threshold, args.waypoint_mode).resolve()
+        else _default_output_dir(
+            records_path,
+            args.err_threshold,
+            args.waypoint_mode,
+            args.eef_position_frame,
+        ).resolve()
     )
+    summary_path = output_dir / "waypoint_summary.json"
+    if summary_path.exists():
+        raise FileExistsError(f"Refusing to overwrite waypoint summary: {summary_path}")
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary = {
+        "format": "event_sae_waypoint_summary_v3",
         "source_trajectory_records_path": str(records_path),
         "output_dir": str(output_dir),
         "waypoint_mode": args.waypoint_mode,
+        "eef_position_frame": args.eef_position_frame,
         "dp_implementation": args.dp_implementation,
         "err_threshold": float(args.err_threshold),
+        "gripper_peak_height": float(args.gripper_peak_height),
+        "gripper_peak_prominence": float(args.gripper_peak_prominence),
+        "gripper_min_peak_distance": int(args.gripper_min_peak_distance),
+        "waypoint_dedup_distance": int(args.waypoint_dedup_distance),
+        "gripper_aperture_definition": "sum(abs(gripper_qpos))",
+        "gripper_normalization_scope": "task_description_minmax_all_source_episodes",
         "success_filter": args.success_filter,
         "task_description_filter": args.task_description,
         "num_available_episodes": len(episodes),
@@ -109,13 +181,19 @@ def main() -> None:
         if len(episode.positions) < 2:
             continue
         ep_start = time.perf_counter()
-        waypoints = extract_waypoints_dp(
+        selection = select_waypoint_anchors(
             episode,
             waypoint_mode=args.waypoint_mode,
             err_threshold=args.err_threshold,
             show_awe_logs=args.show_awe_logs,
             dp_implementation=args.dp_implementation,
+            gripper_peak_height=args.gripper_peak_height,
+            gripper_peak_prominence=args.gripper_peak_prominence,
+            gripper_min_peak_distance=args.gripper_min_peak_distance,
+            waypoint_dedup_distance=args.waypoint_dedup_distance,
         )
+        waypoints = selection.indices
+        anchors = selection.anchors
         ep_seconds = time.perf_counter() - ep_start
         extraction_times.append(ep_seconds)
         summary["episodes"].append(
@@ -128,12 +206,47 @@ def main() -> None:
                 "success": episode.success,
                 "num_steps": int(len(episode.positions)),
                 "waypoint_indices": waypoints,
+                "position_waypoint_indices": list(selection.position_indices),
+                "gripper_close_indices": list(selection.gripper_close_indices),
+                "waypoint_anchors": [
+                    {"waypoint_index": anchor.index, "anchor_source": anchor.source}
+                    for anchor in anchors
+                ],
+                "waypoint_gripper_state": (
+                    []
+                    if episode.gripper_state is None
+                    else [
+                        {
+                            "waypoint_index": anchor.index,
+                            "aperture": float(episode.gripper_state.aperture[anchor.index]),
+                            "normalized_aperture": float(
+                                episode.gripper_state.normalized_aperture[anchor.index]
+                            ),
+                            "aperture_delta": float(
+                                episode.gripper_state.aperture_delta[anchor.index]
+                            ),
+                        }
+                        for anchor in anchors
+                    ]
+                ),
+
                 "num_waypoints": len(waypoints),
                 "waypoint_positions": episode.positions[waypoints].tolist(),
                 "waypoint_mode": args.waypoint_mode,
+                "eef_position_frame": episode.position_frame,
                 "dp_implementation": args.dp_implementation,
                 "has_eef_quat": episode.quaternions is not None,
                 "has_gripper_action": episode.gripper_actions is not None,
+                "has_gripper_qpos": episode.gripper_qpos is not None,
+                "gripper_normalization": (
+                    None
+                    if episode.gripper_state is None
+                    else {
+                        "scope": "task_description_minmax_all_source_episodes",
+                        "min": episode.gripper_state.normalization_min,
+                        "max": episode.gripper_state.normalization_max,
+                    }
+                ),
                 "gripper_toggle_indices": gripper_toggle_indices(episode),
                 "extraction_seconds": ep_seconds,
             }
@@ -152,8 +265,7 @@ def main() -> None:
         float(np.mean(extraction_times)) if extraction_times else 0.0
     )
 
-    summary_path = output_dir / "waypoint_summary.json"
-    with summary_path.open("w", encoding="utf-8") as f:
+    with summary_path.open("x", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"Wrote summary: {summary_path}")
     print(f"Total time: {total:.2f}s; mean per episode: {summary['mean_episode_extraction_seconds']:.2f}s")

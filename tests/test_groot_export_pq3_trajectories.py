@@ -29,6 +29,11 @@ def _payload(*, success: bool = True) -> dict:
     states = []
     actions = []
     for step in range(2):
+        base_rotation = (
+            [0.0, 0.0, 0.0, 1.0]
+            if step == 0
+            else [0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)]
+        )
         states.append(
             {
                 "observation.state.eef_pos_rel": np.asarray(
@@ -36,6 +41,12 @@ def _payload(*, success: bool = True) -> dict:
                 ),
                 "observation.state.eef_quat_rel": np.asarray(
                     [0.0, 0.0, 0.0, 1.0], dtype=np.float32
+                ),
+                "observation.state.base_position": np.asarray(
+                    [10.0, 0.0, 0.0], dtype=np.float32
+                ),
+                "observation.state.base_rotation": np.asarray(
+                    base_rotation, dtype=np.float32
                 ),
                 "observation.state.gripper_qpos": np.asarray(
                     [0.01, 0.02], dtype=np.float32
@@ -105,7 +116,12 @@ def test_export_preserves_pose_provenance_and_video_timing(tmp_path: Path) -> No
     assert [record["step_in_episode"] for record in records] == [0, 1]
     assert [record["done"] for record in records] == [False, True]
     assert records[0]["eef_pos"] == pytest.approx([0.0, 0.1, 0.2])
+    assert records[0]["eef_pos_rel"] == pytest.approx([0.0, 0.1, 0.2])
+    assert records[0]["eef_pos_abs"] == pytest.approx([10.0, 0.1, 0.2])
+    assert records[1]["eef_pos_abs"] == pytest.approx([8.9, 1.0, 1.2])
     assert records[0]["eef_quat"] == [0.0, 0.0, 0.0, 1.0]
+    assert records[0]["base_position"] == [10.0, 0.0, 0.0]
+    assert records[0]["base_rotation"] == [0.0, 0.0, 0.0, 1.0]
     assert records[0]["source_file"] == (
         "OpenDrawer/pq3_drawer_left/task8--ep0--succ1.pkl"
     )
@@ -115,6 +131,7 @@ def test_export_preserves_pose_provenance_and_video_timing(tmp_path: Path) -> No
     )
     episode = manifest["episodes"][0]
     assert manifest["num_records"] == 2
+    assert manifest["available_eef_position_frames"] == ["rel", "abs"]
     assert episode["num_records"] == 2
     assert episode["n_action_steps"] == 5
     assert episode["steps_per_render"] == 2
@@ -171,3 +188,43 @@ def test_export_rejects_nonfinite_pose(tmp_path: Path) -> None:
         EXPORTER.export_trajectories(
             _export_args(root, tmp_path / "export")
         )
+
+
+def test_export_preflights_paired_outputs_when_only_one_exists(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "export"
+    output.mkdir()
+    records_path = output / EXPORTER.RECORDS_NAME
+    manifest_path = output / EXPORTER.MANIFEST_NAME
+    sentinel = b"existing trajectory records"
+    records_path.write_bytes(sentinel)
+
+    with pytest.raises(FileExistsError, match="Refusing to overwrite"):
+        EXPORTER.export_trajectories(
+            _export_args(tmp_path / "missing_input", output)
+        )
+
+    assert records_path.read_bytes() == sentinel
+    assert not manifest_path.exists()
+
+
+def test_trajectory_audit_refuses_to_overwrite_before_loading_inputs(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "trajectory_audit.json"
+    sentinel = b"existing trajectory audit"
+    output.write_bytes(sentinel)
+
+    with pytest.raises(FileExistsError, match="Refusing to overwrite"):
+        EXPORTER.audit_trajectories(
+            SimpleNamespace(
+                trajectory_records_path=tmp_path / "missing_records.jsonl",
+                manifest=tmp_path / "missing_manifest.json",
+                video_root=None,
+                require_complete_videos=False,
+                output=output,
+            )
+        )
+
+    assert output.read_bytes() == sentinel

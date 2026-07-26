@@ -18,6 +18,12 @@ from pathlib import Path
 import numpy as np
 from waypoint_extraction import dp_waypoint_selection
 
+from event_sae.physical_state import (
+    GripperStateSeries,
+    build_task_local_gripper_states,
+    gripper_closing_peak_indices,
+)
+
 
 @dataclass
 class EpisodeTrajectory:
@@ -32,6 +38,27 @@ class EpisodeTrajectory:
     quaternions: np.ndarray | None = None
     gripper_actions: np.ndarray | None = None
     gripper_qpos: np.ndarray | None = None
+    gripper_state: GripperStateSeries | None = None
+    position_frame: str = "rel"
+
+
+@dataclass(frozen=True)
+class WaypointAnchor:
+    index: int
+    source: str
+
+
+@dataclass(frozen=True)
+class WaypointSelection:
+    """Waypoint indices plus provenance used by artifact-producing callers."""
+
+    anchors: tuple[WaypointAnchor, ...]
+    position_indices: tuple[int, ...] = ()
+    gripper_close_indices: tuple[int, ...] = ()
+
+    @property
+    def indices(self) -> list[int]:
+        return [anchor.index for anchor in self.anchors]
 
 
 def _load_optional_vector_field(records: list[dict], key: str) -> np.ndarray | None:
@@ -46,7 +73,35 @@ def _load_optional_scalar_field(records: list[dict], key: str) -> np.ndarray | N
     return np.asarray([float(record[key]) for record in records], dtype=np.float32)
 
 
-def load_episode_trajectories(path: Path) -> list[EpisodeTrajectory]:
+def _eef_position_key(records: list[dict], eef_position_frame: str) -> str:
+    if eef_position_frame == "rel":
+        candidates = ("eef_pos_rel", "eef_pos")
+    elif eef_position_frame == "abs":
+        candidates = ("eef_pos_abs",)
+    else:
+        raise ValueError(
+            f"Unsupported eef_position_frame={eef_position_frame!r}; "
+            "expected 'rel' or 'abs'"
+        )
+    for key in candidates:
+        if all(key in record for record in records):
+            return key
+    if eef_position_frame == "abs":
+        raise ValueError(
+            "eef_position_frame='abs' requires eef_pos_abs in every trajectory "
+            "record; re-export the PQ3 PKLs with the dual-frame exporter"
+        )
+    raise ValueError(
+        "eef_position_frame='rel' requires eef_pos_rel or the legacy eef_pos "
+        "field in every trajectory record"
+    )
+
+
+def load_episode_trajectories(
+    path: Path,
+    *,
+    eef_position_frame: str = "rel",
+) -> list[EpisodeTrajectory]:
     """Load and group `trajectory_records.jsonl` into per-episode `EpisodeTrajectory`."""
     grouped: dict[tuple[int, int, int], list[dict]] = {}
     with path.open("r", encoding="utf-8") as f:
@@ -63,7 +118,10 @@ def load_episode_trajectories(path: Path) -> list[EpisodeTrajectory]:
     for (episode_num, task_id, task_episode_idx), records in sorted(grouped.items()):
         records.sort(key=lambda item: int(item["step_in_episode"]))
         first = records[0]
-        positions = np.asarray([record["eef_pos"] for record in records], dtype=np.float32)
+        position_key = _eef_position_key(records, eef_position_frame)
+        positions = np.asarray(
+            [record[position_key] for record in records], dtype=np.float32
+        )
         quaternions = _load_optional_vector_field(records, "eef_quat")
         gripper_actions = _load_optional_scalar_field(records, "gripper_action")
         gripper_qpos = _load_optional_vector_field(records, "gripper_qpos")
@@ -74,15 +132,47 @@ def load_episode_trajectories(path: Path) -> list[EpisodeTrajectory]:
                 task_id=task_id,
                 task_episode_idx=task_episode_idx,
                 task_description=str(first.get("task_description", "")),
-                prompt_task_description=str(first.get("prompt_task_description", first.get("task_description", ""))),
+                prompt_task_description=str(
+                    first.get(
+                        "prompt_task_description",
+                        first.get("task_description", ""),
+                    )
+                ),
                 success=bool(records[-1]["done"]),
                 step_indices=step_indices,
                 positions=positions,
                 quaternions=quaternions,
                 gripper_actions=gripper_actions,
                 gripper_qpos=gripper_qpos,
+                position_frame=eef_position_frame,
             )
         )
+    episode_keys = {
+        (
+            episode.episode_num,
+            episode.task_id,
+            episode.task_episode_idx,
+        ): episode
+        for episode in episodes
+    }
+    qpos_by_key = {
+        key: episode.gripper_qpos
+        for key, episode in episode_keys.items()
+        if episode.gripper_qpos is not None
+    }
+    if qpos_by_key:
+        task_by_key = {
+            key: episode.task_description
+            for key, episode in episode_keys.items()
+            if episode.gripper_qpos is not None
+        }
+        gripper_states, _ = build_task_local_gripper_states(
+            qpos_by_key,
+            task_by_key,
+        )
+        for key, state in gripper_states.items():
+            episode_keys[key].gripper_state = state
+
     return episodes
 
 
@@ -117,6 +207,13 @@ def require_geometric_gripper_inputs(episodes: list[EpisodeTrajectory]) -> None:
         )
 
 
+def require_gripper_qpos_inputs(episodes: list[EpisodeTrajectory]) -> None:
+    missing_qpos = [e.episode_num for e in episodes if e.gripper_state is None]
+    if missing_qpos:
+        raise ValueError(
+            "waypoint_mode='pos_gripper_close' requires gripper_qpos in every "
+            f"selected episode. Missing episodes: {missing_qpos[:10]}"
+        )
 def gripper_toggle_indices(episode: EpisodeTrajectory) -> list[int]:
     """Step indices where the gripper command flipped sign."""
     if episode.gripper_actions is None:
@@ -125,6 +222,67 @@ def gripper_toggle_indices(episode: EpisodeTrajectory) -> list[int]:
         int(episode.step_indices[idx])
         for idx in range(len(episode.gripper_actions) - 1)
         if episode.gripper_actions[idx] != episode.gripper_actions[idx + 1]
+    ]
+
+
+def gripper_closing_indices(
+    episode: EpisodeTrajectory,
+    *,
+    min_height: float = 0.08,
+    min_prominence: float = 0.04,
+    min_distance: int = 3,
+) -> list[int]:
+    """Return local trajectory indices for task-normalized closing peaks."""
+
+    if episode.gripper_state is None:
+        raise ValueError(
+            f"episode {episode.episode_num} has no task-normalized gripper_qpos state"
+        )
+    return gripper_closing_peak_indices(
+        episode.gripper_state.normalized_aperture,
+        min_height=min_height,
+        min_prominence=min_prominence,
+        min_distance=min_distance,
+    )
+
+
+def merge_waypoint_anchors(
+    position_waypoints: list[int],
+    gripper_close_waypoints: list[int],
+    *,
+    dedup_distance: int = 2,
+) -> list[WaypointAnchor]:
+    """Merge position and closing anchors with deterministic nearest dedup."""
+
+    if dedup_distance < 0:
+        raise ValueError("dedup_distance must be non-negative")
+    position = sorted(set(int(index) for index in position_waypoints))
+    closing = sorted(set(int(index) for index in gripper_close_waypoints))
+    if any(index < 0 for index in [*position, *closing]):
+        raise ValueError("waypoint indices must be non-negative")
+
+    sources: dict[int, set[str]] = {index: {"position"} for index in position}
+    for close_index in closing:
+        nearby_position = [
+            index for index in position if abs(index - close_index) <= dedup_distance
+        ]
+        if nearby_position:
+            matched = min(
+                nearby_position,
+                key=lambda index: (abs(index - close_index), index),
+            )
+            sources[matched].add("gripper_close")
+        else:
+            sources.setdefault(close_index, set()).add("gripper_close")
+
+    source_name = {
+        frozenset({"position"}): "position",
+        frozenset({"gripper_close"}): "gripper_close",
+        frozenset({"position", "gripper_close"}): "both",
+    }
+    return [
+        WaypointAnchor(index=index, source=source_name[frozenset(sources[index])])
+        for index in sorted(sources)
     ]
 
 
@@ -195,7 +353,7 @@ def extract_waypoints_exact_pos_only(
     return waypoints
 
 
-def extract_waypoints_dp(
+def _extract_base_waypoints_dp(
     episode: EpisodeTrajectory,
     *,
     waypoint_mode: str = "pos_only",
@@ -259,3 +417,90 @@ def extract_waypoints_dp(
         with contextlib.redirect_stdout(io.StringIO()):
             waypoints = dp_waypoint_selection(**call_kwargs)
     return [int(idx) for idx in waypoints]
+
+
+def select_waypoint_anchors(
+    episode: EpisodeTrajectory,
+    *,
+    waypoint_mode: str = "pos_only",
+    err_threshold: float = 0.05,
+    show_awe_logs: bool = False,
+    dp_implementation: str = "awe",
+    gripper_peak_height: float = 0.08,
+    gripper_peak_prominence: float = 0.04,
+    gripper_min_peak_distance: int = 3,
+    waypoint_dedup_distance: int = 2,
+) -> WaypointSelection:
+    """Select waypoints once and retain their source provenance."""
+    if waypoint_mode != "pos_gripper_close":
+        waypoints = _extract_base_waypoints_dp(
+            episode,
+            waypoint_mode=waypoint_mode,
+            err_threshold=err_threshold,
+            show_awe_logs=show_awe_logs,
+            dp_implementation=dp_implementation,
+        )
+        source = (
+            "position" if waypoint_mode == "pos_only" else "geometric_gripper"
+        )
+        return WaypointSelection(
+            anchors=tuple(
+                WaypointAnchor(index=index, source=source)
+                for index in waypoints
+            ),
+            position_indices=(
+                tuple(waypoints) if waypoint_mode == "pos_only" else ()
+            ),
+        )
+
+    position_waypoints = _extract_base_waypoints_dp(
+        episode,
+        waypoint_mode="pos_only",
+        err_threshold=err_threshold,
+        show_awe_logs=show_awe_logs,
+        dp_implementation=dp_implementation,
+    )
+    closing_waypoints = gripper_closing_indices(
+        episode,
+        min_height=gripper_peak_height,
+        min_prominence=gripper_peak_prominence,
+        min_distance=gripper_min_peak_distance,
+    )
+    return WaypointSelection(
+        anchors=tuple(
+            merge_waypoint_anchors(
+                position_waypoints,
+                closing_waypoints,
+                dedup_distance=waypoint_dedup_distance,
+            )
+        ),
+        position_indices=tuple(position_waypoints),
+        gripper_close_indices=tuple(closing_waypoints),
+    )
+
+
+def extract_waypoints_dp(
+    episode: EpisodeTrajectory,
+    *,
+    waypoint_mode: str = "pos_only",
+    err_threshold: float = 0.05,
+    show_awe_logs: bool = False,
+    dp_implementation: str = "awe",
+    gripper_peak_height: float = 0.08,
+    gripper_peak_prominence: float = 0.04,
+    gripper_min_peak_distance: int = 3,
+    waypoint_dedup_distance: int = 2,
+) -> list[int]:
+    """Backward-compatible index-only wrapper around waypoint selection."""
+
+    return select_waypoint_anchors(
+        episode,
+        waypoint_mode=waypoint_mode,
+        err_threshold=err_threshold,
+        show_awe_logs=show_awe_logs,
+        dp_implementation=dp_implementation,
+        gripper_peak_height=gripper_peak_height,
+        gripper_peak_prominence=gripper_peak_prominence,
+        gripper_min_peak_distance=gripper_min_peak_distance,
+        waypoint_dedup_distance=waypoint_dedup_distance,
+    ).indices

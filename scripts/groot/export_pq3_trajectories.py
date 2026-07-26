@@ -40,6 +40,8 @@ STATE_FIELDS = {
     "eef_quat": ("observation.state.eef_quat_rel", 4),
     "gripper_qpos": ("observation.state.gripper_qpos", 2),
 }
+BASE_POSITION_KEY = "observation.state.base_position"
+BASE_ROTATION_KEY = "observation.state.base_rotation"
 
 
 def _as_numpy(value: Any) -> np.ndarray:
@@ -58,6 +60,43 @@ def _vector(value: Any, *, size: int, label: str) -> list[float]:
     if not np.isfinite(array).all():
         raise ValueError(f"{label}: non-finite value")
     return [float(item) for item in array]
+
+
+def _rotate_vector_xyzw(
+    vector: list[float],
+    quaternion: list[float],
+    *,
+    label: str,
+) -> np.ndarray:
+    """Rotate a 3-vector by a Robosuite `(x, y, z, w)` quaternion."""
+    vector_array = np.asarray(vector, dtype=np.float64)
+    quaternion_array = np.asarray(quaternion, dtype=np.float64)
+    norm = float(np.linalg.norm(quaternion_array))
+    if not np.isfinite(norm) or norm <= np.finfo(np.float64).eps:
+        raise ValueError(f"{label}: quaternion norm must be finite and non-zero")
+    quaternion_array /= norm
+    xyz = quaternion_array[:3]
+    w = float(quaternion_array[3])
+    cross = np.cross(xyz, vector_array)
+    return vector_array + 2.0 * (w * cross + np.cross(xyz, cross))
+
+
+def _absolute_eef_position(
+    eef_pos_rel: list[float],
+    base_position: list[float],
+    base_rotation: list[float],
+    *,
+    label: str,
+) -> list[float]:
+    rotated = _rotate_vector_xyzw(
+        eef_pos_rel,
+        base_rotation,
+        label=f"{label} base_rotation",
+    )
+    position = np.asarray(base_position, dtype=np.float64) + rotated
+    if not np.isfinite(position).all():
+        raise ValueError(f"{label}: reconstructed eef_pos_abs is non-finite")
+    return [float(item) for item in position]
 
 
 def _event_value(value: Any) -> Any:
@@ -114,13 +153,21 @@ def export_trajectories(args: argparse.Namespace) -> None:
 
     root = args.input_dir.resolve()
     output = args.output_dir.resolve()
-    if output.exists():
-        raise FileExistsError(f"Refusing to overwrite existing output: {output}")
+    records_path = output / RECORDS_NAME
+    manifest_path = output / MANIFEST_NAME
+    existing_outputs = [
+        path
+        for path in (output, records_path, manifest_path)
+        if path.exists() or path.is_symlink()
+    ]
+    if existing_outputs:
+        raise FileExistsError(
+            "Refusing to overwrite existing output(s): "
+            + ", ".join(str(path) for path in existing_outputs)
+        )
 
     paths, cell_counts = _inventory(root, args.allow_partial_inventory)
     output.mkdir(parents=True)
-    records_path = output / RECORDS_NAME
-    manifest_path = output / MANIFEST_NAME
     episodes: list[dict[str, Any]] = []
     total_records = 0
 
@@ -193,6 +240,50 @@ def export_trajectories(args: argparse.Namespace) -> None:
                 missing = sorted(set(STATE_FIELDS) - set(vectors))
                 if missing:
                     raise ValueError(f"{path}: states[{step_in_episode}] missing {missing}")
+                base_position = (
+                    _vector(
+                        state[BASE_POSITION_KEY],
+                        size=3,
+                        label=(
+                            f"{path}: states[{step_in_episode}]"
+                            f"[{BASE_POSITION_KEY!r}]"
+                        ),
+                    )
+                    if BASE_POSITION_KEY in state
+                    else None
+                )
+                base_rotation = (
+                    _vector(
+                        state[BASE_ROTATION_KEY],
+                        size=4,
+                        label=(
+                            f"{path}: states[{step_in_episode}]"
+                            f"[{BASE_ROTATION_KEY!r}]"
+                        ),
+                    )
+                    if BASE_ROTATION_KEY in state
+                    else None
+                )
+                if base_position is None or base_rotation is None:
+                    missing_base_fields = [
+                        key
+                        for key, value in (
+                            (BASE_POSITION_KEY, base_position),
+                            (BASE_ROTATION_KEY, base_rotation),
+                        )
+                        if value is None
+                    ]
+                    raise ValueError(
+                        f"{path}: states[{step_in_episode}] missing "
+                        f"absolute-frame inputs {missing_base_fields}"
+                    )
+                eef_pos_rel = vectors["eef_pos"]
+                eef_pos_abs = _absolute_eef_position(
+                    eef_pos_rel,
+                    base_position,
+                    base_rotation,
+                    label=f"{path}: states[{step_in_episode}]",
+                )
                 record = {
                     "episode_num": episode_num,
                     "task_id": task_id,
@@ -201,6 +292,10 @@ def export_trajectories(args: argparse.Namespace) -> None:
                     "prompt_task_description": prompt_task_description,
                     "step_in_episode": step_in_episode,
                     **vectors,
+                    "eef_pos_rel": eef_pos_rel,
+                    "eef_pos_abs": eef_pos_abs,
+                    "base_position": base_position,
+                    "base_rotation": base_rotation,
                     "done": bool(success and step_in_episode == len(states) - 1),
                     "episode_success": success,
                     "task_family": task_family,
@@ -269,10 +364,19 @@ def export_trajectories(args: argparse.Namespace) -> None:
         "inventory_verified": not args.allow_partial_inventory,
         "record_unit": "policy_inference_record",
         "state_frame": "robot_relative",
+        "available_eef_position_frames": ["rel", "abs"],
         "state_fields": {
-            "eef_pos": "observation.state.eef_pos_rel[3]",
+            "eef_pos": "legacy alias of eef_pos_rel[3]",
+            "eef_pos_rel": "observation.state.eef_pos_rel[3]",
+            "eef_pos_abs": (
+                "observation.state.base_position[3] + "
+                "R_xyzw(observation.state.base_rotation[4]) @ "
+                "observation.state.eef_pos_rel[3]"
+            ),
             "eef_quat": "observation.state.eef_quat_rel[4]",
             "gripper_qpos": "observation.state.gripper_qpos[2]",
+            "base_position": "observation.state.base_position[3]",
+            "base_rotation": "observation.state.base_rotation[4], xyzw",
         },
         "video_timeline": {
             "mapping": "frame f -> env_step f*steps_per_render -> record env_step//n_action_steps",
@@ -303,6 +407,14 @@ def _load_manifest(path: Path) -> dict:
 def audit_trajectories(args: argparse.Namespace) -> dict:
     records_path = args.trajectory_records_path.resolve()
     manifest_path = args.manifest.resolve()
+    output_path = (
+        args.output.resolve()
+        if args.output is not None
+        else records_path.parent / AUDIT_NAME
+    )
+    if output_path.exists() or output_path.is_symlink():
+        raise FileExistsError(f"Refusing to overwrite existing output: {output_path}")
+
     manifest = _load_manifest(manifest_path)
     episode_manifest: dict[int, dict] = {}
     for episode in manifest["episodes"]:
@@ -316,6 +428,19 @@ def audit_trajectories(args: argparse.Namespace) -> dict:
     seen_done: dict[int, list[bool]] = defaultdict(list)
     seen_source: dict[int, set[str]] = defaultdict(set)
     record_count = 0
+    dual_frame = set(manifest.get("available_eef_position_frames", [])) >= {
+        "rel",
+        "abs",
+    }
+    vector_fields = [
+        ("eef_pos", 3),
+        ("eef_quat", 4),
+        ("gripper_qpos", 2),
+    ]
+    if dual_frame:
+        vector_fields.extend(
+            [("eef_pos_rel", 3), ("eef_pos_abs", 3), ("base_position", 3), ("base_rotation", 4)]
+        )
 
     with records_path.open("r", encoding="utf-8") as records_file:
         for line_number, line in enumerate(records_file, 1):
@@ -326,8 +451,29 @@ def audit_trajectories(args: argparse.Namespace) -> dict:
             episode = episode_manifest[episode_num]
             if int(record["task_id"]) != int(episode["task_id"]):
                 raise ValueError(f"line {line_number}: task_id mismatch")
-            for key, size in (("eef_pos", 3), ("eef_quat", 4), ("gripper_qpos", 2)):
+            for key, size in vector_fields:
                 _vector(record[key], size=size, label=f"line {line_number} {key}")
+            if dual_frame:
+                expected_abs = _absolute_eef_position(
+                    record["eef_pos_rel"],
+                    record["base_position"],
+                    record["base_rotation"],
+                    label=f"line {line_number}",
+                )
+                if not np.allclose(
+                    record["eef_pos"],
+                    record["eef_pos_rel"],
+                    rtol=1e-7,
+                    atol=1e-9,
+                ):
+                    raise ValueError(f"line {line_number}: eef_pos alias mismatch")
+                if not np.allclose(
+                    record["eef_pos_abs"],
+                    expected_abs,
+                    rtol=1e-7,
+                    atol=1e-9,
+                ):
+                    raise ValueError(f"line {line_number}: eef_pos_abs mismatch")
             seen_steps[episode_num].append(int(record["step_in_episode"]))
             seen_done[episode_num].append(bool(record["done"]))
             seen_source[episode_num].add(str(record["source_file"]))
@@ -392,11 +538,6 @@ def audit_trajectories(args: argparse.Namespace) -> dict:
         "missing_video_relative_paths": missing_videos,
         "complete_video_inventory_required": bool(args.require_complete_videos),
     }
-    output_path = (
-        args.output.resolve()
-        if args.output is not None
-        else records_path.parent / AUDIT_NAME
-    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",

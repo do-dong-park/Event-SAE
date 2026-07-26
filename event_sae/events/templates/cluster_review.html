@@ -1,0 +1,2420 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Event-SAE — Cluster Review</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #12161b;
+      --panel-2: #181d24;
+      --line: #29313b;
+      --text: #f2f5f7;
+      --muted: #94a0ad;
+      --accent: #ffb15a;
+      --accent-2: #61d6c2;
+      --danger: #ff7272;
+      --blue: #78a8ff;
+      --radius: 14px;
+      --shadow: 0 16px 44px rgba(0, 0, 0, .28);
+      --topbar-height: 72px;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color-scheme: dark;
+      -webkit-font-smoothing: antialiased;
+      background:
+        radial-gradient(circle at 12% -10%, rgba(97, 214, 194, .10), transparent 30rem),
+        radial-gradient(circle at 92% 0%, rgba(255, 177, 90, .08), transparent 32rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { color: inherit; }
+    .topbar {
+      position: relative;
+      z-index: 10;
+      height: var(--topbar-height);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(11, 13, 16, .94);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 10px 32px rgba(0,0,0,.18);
+    }
+    .brand { min-width: 210px; }
+    .eyebrow {
+      color: var(--accent-2);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    .brand h1 {
+      margin: 3px 0 0;
+      font-size: 20px;
+      letter-spacing: -.02em;
+    }
+    .brand h1 span { color: var(--muted); font-weight: 500; }
+    .task-select {
+      height: 38px;
+      padding: 0 34px 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
+      color: var(--text);
+      outline: none;
+    }
+    .task-select {
+      min-width: 260px;
+      max-width: 420px;
+    }
+    .top-spacer { flex: 1; }
+    .progress-wrap { width: 190px; }
+    .progress-line {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .progress-track {
+      height: 5px;
+      border-radius: 99px;
+      background: #252b33;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+      transition: width .25s ease;
+    }
+    .outline-btn, .solid-btn, .icon-btn {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel-2);
+      cursor: pointer;
+      transition: border-color .16s, background .16s, transform .16s;
+    }
+    .outline-btn:hover, .icon-btn:hover {
+      border-color: #46525f;
+      background: #20262e;
+    }
+    .outline-btn:active, .solid-btn:active, .icon-btn:active { transform: translateY(1px); }
+    .outline-btn { padding: 9px 13px; }
+    .solid-btn {
+      padding: 10px 16px;
+      color: #15100a;
+      font-weight: 800;
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+    .solid-btn:hover { background: #ffc078; }
+    .solid-btn:disabled { opacity: .38; cursor: not-allowed; }
+    .outline-btn:disabled, .icon-btn:disabled {
+      opacity: .36;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .app-grid {
+      height: calc(100vh - var(--topbar-height));
+      display: grid;
+      grid-template-columns: 320px minmax(520px, 1fr) 390px;
+      gap: 12px;
+      padding: 12px;
+    }
+    .column {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .panel {
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(18, 22, 27, .94);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 15px 16px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-head h2 {
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: .01em;
+    }
+    .panel-head small { color: var(--muted); font-size: 11px; }
+    .media-head-meta {
+      display: flex;
+      align-items: flex-end;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .version-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 3px 8px;
+      color: var(--accent-2) !important;
+      font-weight: 800;
+      border: 1px solid rgba(97, 214, 194, .35);
+      border-radius: 99px;
+      background: rgba(97, 214, 194, .08);
+    }
+    .cluster-panel { flex: 1; display: flex; flex-direction: column; }
+    .filters {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .search {
+      width: 100%;
+      height: 34px;
+      padding: 0 11px;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0f1317;
+      outline: none;
+    }
+    .search:focus { border-color: var(--accent-2); }
+    .queue-filter {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      padding: 0 12px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .queue-filter button {
+      min-height: 30px;
+      padding: 4px 7px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #0f1317;
+      cursor: pointer;
+    }
+    .queue-filter button.active {
+      color: var(--text);
+      border-color: rgba(97, 214, 194, .55);
+      background: rgba(97, 214, 194, .10);
+    }
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 12px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--line);
+    }
+    .toggle input { accent-color: var(--accent); }
+    .coverage-control {
+      padding: 10px 12px 9px;
+      border-bottom: 1px solid var(--line);
+      background: #101419;
+    }
+    .coverage-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .coverage-head {
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .coverage-head b {
+      color: var(--accent-2);
+      font-size: 11px;
+    }
+    .coverage-note {
+      color: #74808c;
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .cluster-list {
+      overflow: auto;
+      padding: 8px;
+      scrollbar-color: #39424d transparent;
+    }
+    .phase-group-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 8px 3px 6px;
+      padding: 7px 8px;
+      border-bottom: 1px solid #2c3640;
+      color: #dce2e8;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .phase-group-heading small { color: var(--muted); font-weight: 650; }
+    .group-mode-select { margin-left: 6px; color: var(--text); background: #11161c; }
+
+    .cluster-card {
+      width: 100%;
+      display: block;
+      margin: 0 0 7px;
+      padding: 11px 11px 10px;
+      text-align: left;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      cursor: pointer;
+    }
+    .cluster-card:hover { background: #191f26; }
+    .cluster-card.selected {
+      border-color: #49525c;
+      background: #1c2229;
+    }
+    .cluster-top { display: flex; align-items: center; gap: 8px; }
+    .color-dot {
+      width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto;
+      box-shadow: 0 0 0 3px rgba(255,255,255,.04);
+    }
+    .cluster-id {
+      flex: 1;
+      color: #d8dee5;
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .review-mark {
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .review-mark.approved { color: var(--accent-2); }
+    .review-mark.corrected { color: var(--accent); }
+    .review-mark.ambiguous { color: var(--danger); }
+    .review-mark.blind-recorded { color: var(--blue); }
+    .cluster-phrase {
+      margin: 7px 0 8px 17px;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .cluster-phrase.unlabeled { color: #697582; font-style: italic; }
+    .cluster-meta {
+      display: flex;
+      gap: 9px;
+      margin-left: 17px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .phase-pill {
+      padding: 3px 7px;
+      border: 1px solid rgba(255,177,90,.32);
+      border-radius: 99px;
+      color: var(--accent);
+      background: rgba(255,177,90,.08);
+    }
+    .phase-legend {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 12px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+      background: #101419;
+      scrollbar-width: thin;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex: 0 0 auto;
+      color: #cbd2d9;
+      font-size: 10px;
+    }
+    .legend-item {
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .legend-item.empty { opacity: .42; }
+    .legend-item.selected {
+      color: var(--text);
+      outline: 1px solid rgba(255, 177, 90, .45);
+      outline-offset: 3px;
+      border-radius: 4px;
+    }
+    .legend-swatch {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .scatter-panel { flex: 1.02; min-height: 330px; display: flex; flex-direction: column; }
+    .scatter-wrap {
+      position: relative;
+      flex: 1;
+      min-height: 260px;
+      background:
+        linear-gradient(rgba(255,255,255,.026) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.026) 1px, transparent 1px),
+        #0e1216;
+      background-size: 32px 32px;
+    }
+    .scatter-wrap svg { width: 100%; height: 100%; display: block; }
+    .scatter-note {
+      position: absolute;
+      left: 13px;
+      bottom: 10px;
+      padding: 5px 8px;
+      color: #77838f;
+      font-size: 10px;
+      border-radius: 6px;
+      background: rgba(10,13,16,.76);
+      pointer-events: none;
+    }
+    .tooltip {
+      position: fixed;
+      z-index: 20;
+      display: none;
+      max-width: 300px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.45;
+      border: 1px solid #3a444f;
+      border-radius: 8px;
+      background: #0b0e12;
+      box-shadow: var(--shadow);
+      pointer-events: none;
+    }
+    .player-panel { flex: .98; min-height: 330px; display: flex; flex-direction: column; }
+    .player-body {
+      min-height: 0;
+      flex: 1;
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) 220px;
+      gap: 14px;
+      padding: 14px;
+    }
+    .frame-stage {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    .hero-wrap {
+      position: relative;
+      min-height: 210px;
+      flex: 1;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #07090b;
+    }
+    .hero-frame {
+      width: 100%;
+      height: 100%;
+      min-height: 210px;
+      display: block;
+      object-fit: contain;
+      image-rendering: auto;
+    }
+    .camera-guide {
+      position: absolute;
+      inset: 7px 7px auto;
+      display: none;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+      pointer-events: none;
+    }
+    .hero-wrap.multiview .camera-guide { display: grid; }
+    .camera-guide span {
+      padding: 4px 7px;
+      color: rgba(242, 245, 247, .92);
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: .12em;
+      text-align: center;
+      border: 1px solid rgba(255,255,255,.17);
+      border-radius: 6px;
+      background: rgba(6, 8, 10, .68);
+      backdrop-filter: blur(5px);
+    }
+    .timeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .timeline.multiview { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .thumb {
+      aspect-ratio: 1;
+      width: 100%;
+      padding: 0;
+      overflow: hidden;
+      border: 2px solid transparent;
+      border-radius: 7px;
+      background: #080a0d;
+      cursor: pointer;
+    }
+    .timeline.multiview .thumb { aspect-ratio: 768 / 280; }
+    .thumb.active { border-color: var(--accent); }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .timeline.multiview .thumb img { object-fit: contain; }
+    .play-controls {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .icon-btn { min-width: 34px; height: 31px; padding: 0 9px; }
+    .speed-select {
+      height: 31px;
+      margin-left: auto;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+    }
+    .sample-info {
+      min-width: 0;
+      padding-left: 13px;
+      border-left: 1px solid var(--line);
+      overflow: auto;
+    }
+    .sample-kicker {
+      color: var(--accent-2);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .sample-info h3 {
+      margin: 7px 0 12px;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 7px 8px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .kv b { color: #d7dee5; font-weight: 650; overflow-wrap: anywhere; }
+    .sample-nav {
+      display: flex;
+      gap: 6px;
+      margin-top: 14px;
+    }
+    .sample-nav button { flex: 1; }
+    .blind-note {
+      margin-top: 13px;
+      padding: 8px;
+      color: #77838f;
+      font-size: 10px;
+      line-height: 1.45;
+      border-radius: 8px;
+      background: #0d1115;
+    }
+    .review-panel { flex: 1; display: flex; flex-direction: column; overflow: auto; }
+    .review-body { padding: 15px; }
+    .annotation-card {
+      padding: 13px;
+      border: 1px solid #343d47;
+      border-radius: 10px;
+      background: linear-gradient(145deg, rgba(255,177,90,.07), rgba(97,214,194,.04));
+    }
+    .annotation-card.human-card {
+      border-color: rgba(120, 168, 255, .38);
+      background: linear-gradient(145deg, rgba(120,168,255,.08), rgba(97,214,194,.03));
+    }
+    .review-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 11px 12px;
+      color: #cbd4dc;
+      font-size: 10px;
+      line-height: 1.48;
+      border: 1px solid rgba(120,168,255,.28);
+      border-radius: 9px;
+      background: rgba(120,168,255,.07);
+    }
+    .review-step b {
+      flex: 0 0 auto;
+      color: var(--blue);
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .annotation-label {
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .annotation-phrase {
+      margin: 8px 0 10px;
+      font-size: 17px;
+      font-weight: 720;
+      line-height: 1.35;
+    }
+    .annotation-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .phase-reference {
+      margin-top: 11px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #0e1216;
+    }
+    .phase-reference summary {
+      padding: 10px 11px;
+      color: #cfd6dd;
+      font-size: 10px;
+      font-weight: 750;
+      cursor: pointer;
+      user-select: none;
+    }
+    .phase-guide-list {
+      display: grid;
+      gap: 5px;
+      padding: 0 8px 9px;
+    }
+    .phase-guide-row {
+      display: grid;
+      grid-template-columns: 102px 1fr;
+      gap: 8px;
+      padding: 7px 8px;
+      color: var(--muted);
+      font-size: 9px;
+      line-height: 1.42;
+      border: 1px solid transparent;
+      border-radius: 7px;
+    }
+    .phase-guide-row b { color: #dce2e8; overflow-wrap: anywhere; }
+    .phase-guide-row.active {
+      color: #dce2e8;
+      border-color: rgba(255, 177, 90, .34);
+      background: rgba(255, 177, 90, .07);
+    }
+    .review-status-unsaved {
+      color: var(--accent) !important;
+      font-weight: 800;
+    }
+    .coverage-bar {
+      height: 4px;
+      flex: 1;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #28303a;
+    }
+    .coverage-bar span { display: block; height: 100%; background: var(--accent-2); }
+    .section-label {
+      margin: 18px 0 8px;
+      color: #cfd6dd;
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .verdicts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .verdict {
+      min-height: 55px;
+      padding: 7px 4px;
+      color: var(--muted);
+      font-size: 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #101419;
+      cursor: pointer;
+    }
+    .verdict strong { display: block; margin-bottom: 3px; color: #dce2e8; font-size: 11px; }
+    .verdict.selected[data-verdict="approved"] {
+      color: var(--accent-2); border-color: var(--accent-2); background: rgba(97,214,194,.08);
+    }
+    .verdict.selected[data-verdict="corrected"] {
+      color: var(--accent); border-color: var(--accent); background: rgba(255,177,90,.08);
+    }
+    .verdict.selected[data-verdict="ambiguous"] {
+      color: var(--danger); border-color: var(--danger); background: rgba(255,114,114,.08);
+    }
+    .field { display: block; margin-top: 10px; }
+    .field span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 10px; }
+    .field input, .field select, .field textarea {
+      width: 100%;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0e1216;
+      outline: none;
+    }
+    .field input, .field select { height: 36px; padding: 0 10px; }
+    .field textarea { min-height: 78px; padding: 9px 10px; resize: vertical; }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent-2); }
+    .field input:disabled, .field select:disabled { opacity: .42; }
+    .flag-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+      margin-top: 11px;
+    }
+    .flag-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-height: 54px;
+      padding: 9px 10px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0e1216;
+      cursor: pointer;
+    }
+    .flag-option input { margin-top: 2px; accent-color: var(--danger); }
+    .flag-option strong { display: block; color: #dce2e8; font-size: 11px; }
+    .agreement-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+      margin-top: 9px;
+    }
+    .agreement-choice {
+      min-height: 58px;
+      padding: 8px;
+      color: var(--muted);
+      font-size: 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #101419;
+      cursor: pointer;
+    }
+    .agreement-choice strong {
+      display: block;
+      margin-bottom: 3px;
+      color: #dce2e8;
+      font-size: 11px;
+    }
+    .agreement-choice.selected {
+      color: var(--accent-2);
+      border-color: var(--accent-2);
+      background: rgba(97,214,194,.08);
+      box-shadow: inset 0 0 0 1px rgba(97,214,194,.35);
+    }
+    .agreement-choice[data-consistent="false"].selected {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: rgba(255,177,90,.08);
+      box-shadow: inset 0 0 0 1px rgba(255,177,90,.35);
+    }
+    .review-summary {
+      display: grid;
+      grid-template-columns: 104px minmax(0, 1fr);
+      gap: 7px 9px;
+      margin-top: 10px;
+      padding: 11px;
+      color: var(--muted);
+      font-size: 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #0e1216;
+    }
+    .review-summary b { color: #dce2e8; overflow-wrap: anywhere; }
+    .review-actions { display: flex; gap: 8px; margin-top: 13px; }
+    .review-actions .solid-btn { flex: 1; }
+    .empty {
+      padding: 22px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .shortcut-dialog {
+      width: min(560px, calc(100vw - 32px));
+      padding: 0;
+      color: var(--text);
+      border: 1px solid #3a444f;
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: 0 24px 80px rgba(0,0,0,.55);
+    }
+    .shortcut-dialog::backdrop {
+      background: rgba(4, 6, 8, .72);
+      backdrop-filter: blur(4px);
+    }
+    .shortcut-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 15px 17px;
+      border-bottom: 1px solid var(--line);
+    }
+    .shortcut-head h2 { margin: 0; font-size: 14px; }
+    .shortcut-body {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 18px;
+      padding: 16px 17px 18px;
+    }
+    .shortcut-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    kbd {
+      min-width: 30px;
+      padding: 4px 7px;
+      color: #dfe5ea;
+      font-family: inherit;
+      font-size: 9px;
+      font-weight: 800;
+      text-align: center;
+      border: 1px solid #46515d;
+      border-bottom-width: 2px;
+      border-radius: 6px;
+      background: #1b2128;
+    }
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 50;
+      padding: 11px 14px;
+      color: #102019;
+      font-size: 12px;
+      font-weight: 750;
+      border-radius: 9px;
+      background: var(--accent-2);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity .18s, transform .18s;
+    }
+    .toast.show { opacity: 1; transform: none; }
+    .toast.error { color: white; background: var(--danger); }
+    /* Visual polish and interaction consistency. */
+    ::selection { color: #07110f; background: var(--accent-2); }
+    * { scrollbar-width: thin; scrollbar-color: #3a4652 transparent; }
+    *::-webkit-scrollbar { width: 9px; height: 9px; }
+    *::-webkit-scrollbar-thumb {
+      border: 2px solid transparent;
+      border-radius: 99px;
+      background: #3a4652;
+      background-clip: padding-box;
+    }
+    button, input, select, textarea {
+      transition: border-color .16s ease, background-color .16s ease,
+        box-shadow .16s ease, opacity .16s ease;
+    }
+    button:focus-visible, input:focus-visible, select:focus-visible,
+    textarea:focus-visible, summary:focus-visible {
+      outline: 2px solid var(--accent-2);
+      outline-offset: 2px;
+    }
+    input:hover, select:hover, textarea:hover { border-color: #465462; }
+    .brand { min-width: 195px; }
+    .brand h1 { white-space: nowrap; }
+    .task-select { height: 40px; }
+    .panel {
+      border-color: #2b3540;
+      background: linear-gradient(180deg, rgba(20,25,31,.97), rgba(16,20,25,.96));
+      box-shadow: inset 0 1px rgba(255,255,255,.025), var(--shadow);
+    }
+    .panel-head {
+      min-height: 52px;
+      padding: 13px 15px;
+      background: rgba(9,12,15,.18);
+    }
+    .panel-head h2 { font-size: 14px; font-weight: 760; }
+    .panel-head small { line-height: 1.35; }
+    .cluster-card {
+      border-color: transparent;
+      transition: border-color .16s ease, background .16s ease,
+        transform .16s ease;
+    }
+    .cluster-card:hover { border-color: #303b46; transform: translateY(-1px); }
+    .cluster-card.selected {
+      border-color: rgba(97,214,194,.46);
+      background: linear-gradient(105deg, rgba(97,214,194,.12), rgba(28,34,41,.9) 58%);
+      box-shadow: inset 3px 0 var(--accent-2);
+    }
+    .cluster-phrase { font-size: 12.5px; }
+    .phase-pill { font-size: 10px; font-weight: 760; white-space: nowrap; }
+    .queue-filter button:hover { color: var(--text); border-color: #3c4956; }
+    .queue-filter button.active { box-shadow: inset 0 0 0 1px rgba(97,214,194,.12); }
+    .scatter-wrap {
+      background:
+        radial-gradient(circle at 50% 50%, rgba(97,214,194,.045), transparent 52%),
+        linear-gradient(rgba(255,255,255,.026) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.026) 1px, transparent 1px),
+        #0d1115;
+      background-size: auto, 32px 32px, 32px 32px, auto;
+    }
+    .hero-wrap {
+      border-color: #303a45;
+      box-shadow: inset 0 0 40px rgba(0,0,0,.32);
+    }
+    .thumb { border-color: #222b34; opacity: .72; }
+    .thumb:hover { opacity: 1; border-color: #52606d; }
+    .thumb.active {
+      opacity: 1;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(255,177,90,.12);
+    }
+    .empty { line-height: 1.55; }
+    .review-body { padding: 16px; }
+    .annotation-card {
+      border-color: #3a4652;
+      box-shadow: inset 0 1px rgba(255,255,255,.025);
+    }
+    .annotation-label { font-size: 10px; }
+    .annotation-phrase { font-size: 18px; letter-spacing: -.012em; }
+    .annotation-meta { font-size: 11px; }
+    .phase-reference summary { font-size: 11px; }
+    .phase-guide-row {
+      grid-template-columns: 108px 1fr;
+      min-height: 38px;
+      font-size: 10px;
+    }
+    .section-label { margin-top: 19px; font-size: 12px; }
+    .verdict {
+      min-height: 60px;
+      font-size: 10.5px;
+      transition: border-color .16s ease, background .16s ease,
+        box-shadow .16s ease, transform .16s ease;
+    }
+    .verdict:hover {
+      color: #c8d0d8;
+      border-color: #4a5866;
+      transform: translateY(-1px);
+    }
+    .verdict strong { font-size: 12px; }
+    .verdict.selected { box-shadow: inset 0 0 0 1px currentColor; }
+    .field { margin-top: 12px; }
+    .field span { font-size: 11px; font-weight: 650; }
+    .field input, .field select { height: 39px; }
+    .field textarea { min-height: 84px; line-height: 1.45; }
+    .review-actions {
+      position: sticky;
+      bottom: -16px;
+      z-index: 3;
+      margin-top: 16px;
+      padding: 12px 0 16px;
+      background: linear-gradient(180deg, transparent, #11151a 22%);
+    }
+
+    @media (max-width: 1600px) {
+      .brand { min-width: 170px; }
+      .brand h1 span { display: none; }
+      .task-select { min-width: 220px; max-width: 330px; }
+      .progress-wrap { width: 150px; }
+      .app-grid { grid-template-columns: 295px minmax(480px,1fr) 350px; }
+    }
+    @media (max-width: 1380px) {
+      .topbar { gap: 8px; padding-inline: 12px; }
+      .brand { min-width: 145px; }
+      .task-select { min-width: 190px; max-width: 280px; }
+      .progress-wrap { width: 120px; }
+      .outline-btn { padding-inline: 10px; font-size: 11px; }
+    }
+    @media (max-width: 1280px) {
+      body { overflow: auto; }
+      .app-grid { height: auto; min-height: calc(100vh - var(--topbar-height)); grid-template-columns: 290px 1fr; }
+      .review-column { grid-column: 1 / -1; min-height: 640px; }
+    }
+    @media (max-width: 1120px) {
+      .progress-wrap { display: none; }
+    }
+    @media (max-width: 920px) {
+      .topbar {
+        height: auto;
+        min-height: var(--topbar-height);
+        flex-wrap: wrap;
+        padding-block: 10px;
+      }
+      .brand { min-width: 140px; }
+      .task-select {
+        order: 4;
+        flex: 1 1 100%;
+        min-width: 0;
+        max-width: none;
+      }
+      .top-spacer { display: none; }
+      .app-grid { min-height: 0; }
+      .app-grid { grid-template-columns: 1fr; }
+      .review-column { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div id="conditionEyebrow" class="eyebrow">Stage 3 · Blind audit</div>
+      <h1>Event Atlas <span id="brandCondition">/ loading…</span></h1>
+    </div>
+    <select id="taskSelect" class="task-select" aria-label="Task"></select>
+    <div class="top-spacer"></div>
+    <div class="progress-wrap">
+      <div class="progress-line"><span>Review progress</span><b id="progressText">0 / 0</b></div>
+      <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+    </div>
+    <button id="nextUnreviewed" class="outline-btn">Next unreviewed</button>
+    <button id="downloadReviews" class="outline-btn">Export</button>
+    <button id="shortcutHelp" class="icon-btn" title="Keyboard shortcuts" aria-label="Keyboard shortcuts">?</button>
+  </header>
+
+  <main class="app-grid">
+    <aside class="column">
+      <section class="panel cluster-panel">
+        <div class="panel-head">
+          <h2>Clusters</h2>
+          <small id="clusterCount"></small>
+        </div>
+        <div class="filters"><input id="clusterSearch" class="search" placeholder="Search human label or cluster ID"></div>
+        <div class="queue-filter" aria-label="Review status filter">
+          <button type="button" data-review-filter="all" class="active">All</button>
+          <button type="button" data-review-filter="unreviewed">Unreviewed</button>
+          <button type="button" data-review-filter="reviewed">Reviewed</button>
+        </div>
+        <div class="coverage-control">
+          <div class="coverage-head"><span>Annotation scope</span><b id="coverageValue">≥ 9 / 30 · 30%</b></div>
+          <div class="coverage-note">Fixed by the annotation artifact; lower-coverage clusters were not labeled.</div>
+        </div>
+        <label class="toggle"><input id="annotatedOnly" type="checkbox"> phase-labeled clusters only</label>
+        <label class="toggle">List view
+          <select id="groupMode" class="group-mode-select">
+            <option value="cluster">Raw event clusters</option>
+            <option value="phase">Human phase groups</option>
+          </select>
+        </label>
+        <div id="clusterList" class="cluster-list"></div>
+      </section>
+    </aside>
+
+    <section class="column">
+      <section class="panel scatter-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Task-local event map</h2>
+            <small id="scatterSubtitle">C0 descriptor · approximate 2D projection</small>
+          </div>
+          <small>Click any point to inspect its episode</small>
+        </div>
+        <div id="phaseLegend" class="phase-legend"></div>
+        <div class="scatter-wrap">
+          <svg id="scatter" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet" aria-label="Event scatter plot"></svg>
+          <div class="scatter-note">Equal x/y scale · 2D geometry is for navigation, not distance evidence.</div>
+        </div>
+      </section>
+
+      <section class="panel player-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Event frame player</h2>
+            <small id="playerSubtitle">Select a cluster or point</small>
+          </div>
+          <div class="media-head-meta">
+            <small id="mediaBadge" class="version-badge">Loading version…</small>
+            <small>Use thumbnails or playback controls</small>
+          </div>
+        </div>
+        <div class="player-body">
+          <div class="frame-stage">
+            <div id="heroWrap" class="hero-wrap">
+              <img id="heroFrame" class="hero-frame" alt="Selected event frame">
+              <div class="camera-guide" aria-hidden="true">
+                <span>LEFT</span><span>RIGHT</span><span>WRIST</span>
+              </div>
+            </div>
+            <div id="timeline" class="timeline"></div>
+            <div class="play-controls">
+              <button id="firstFrame" class="icon-btn" title="First frame">|◀</button>
+              <button id="previousFrame" class="icon-btn" title="Previous frame">←</button>
+              <button id="playPause" class="icon-btn" title="Play or pause">▶</button>
+              <button id="nextFrame" class="icon-btn" title="Next frame">→</button>
+              <span id="frameCounter" style="color:var(--muted);font-size:11px">0 / 0</span>
+              <select id="speedSelect" class="speed-select" aria-label="Playback speed">
+                <option value="800">Slow · 800 ms</option>
+                <option value="500" selected>Normal · 500 ms</option>
+                <option value="250">Fast · 250 ms</option>
+              </select>
+            </div>
+          </div>
+          <div class="sample-info">
+            <div id="sampleKind" class="sample-kicker">No sample</div>
+            <h3 id="sampleId">—</h3>
+            <div id="sampleMeta" class="kv"></div>
+            <div class="sample-nav">
+              <button id="previousSample" class="outline-btn">← Prev</button>
+              <button id="nextSample" class="outline-btn">Next →</button>
+            </div>
+            <div class="blind-note">Blind mode hides rollout outcome, episode identity, waypoint rank, progress, filenames, and Gemini labels until the independent assessment is locked.</div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="column review-column">
+      <section class="panel review-panel">
+        <div class="panel-head">
+          <h2>Blind visual assessment</h2>
+          <small id="reviewStatus">Not reviewed</small>
+        </div>
+        <div id="reviewBody" class="review-body"></div>
+      </section>
+    </aside>
+  </main>
+
+  <dialog id="shortcutDialog" class="shortcut-dialog">
+    <div class="shortcut-head">
+      <h2>Keyboard shortcuts</h2>
+      <button id="shortcutClose" class="icon-btn" aria-label="Close shortcuts">×</button>
+    </div>
+    <div class="shortcut-body">
+      <div class="shortcut-row"><span>Play / pause</span><kbd>Space</kbd></div>
+      <div class="shortcut-row"><span>Frame by number</span><kbd>1–9</kbd></div>
+      <div class="shortcut-row"><span>Previous / next frame</span><kbd>← / →</kbd></div>
+      <div class="shortcut-row"><span>Previous / next clip</span><kbd>K / J</kbd></div>
+      <div class="shortcut-row"><span>Next unreviewed</span><kbd>N</kbd></div>
+      <div class="shortcut-row"><span>Phrase consistent</span><kbd>Y</kbd></div>
+      <div class="shortcut-row"><span>Phrase inconsistent</span><kbd>N</kbd></div>
+      <div class="shortcut-row"><span>Lock / finalize</span><kbd>Ctrl ↵</kbd></div>
+      <div class="shortcut-row"><span>Open this guide</span><kbd>?</kbd></div>
+    </div>
+  </dialog>
+  <div id="tooltip" class="tooltip"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const state = {
+      data: null,
+      task: null,
+      clusterId: null,
+      sampleId: null,
+      frame: 0,
+      timer: null,
+      phrasePhaseConsistent: null,
+      reviewFilter: "all",
+      phaseFilter: null,
+      dirty: false,
+      saving: false,
+      groupMode: "cluster",
+      reviews: new Map(),
+      revealedAnnotations: new Map(),
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const svgNS = "http://www.w3.org/2000/svg";
+
+    const PHASE_COLORS = {
+      "reach-to-object": "#65a9ff",
+      "reach-to-handle": "#65a9ff",
+      "grasp": "#ffb15a",
+      "grasp-handle": "#ffb15a",
+      "transport": "#61d6c2",
+      "pull": "#61d6c2",
+      "place": "#ad86ff",
+      "push-back": "#ad86ff",
+      "insert-settle": "#4fd3e0",
+      "disengage": "#4fd3e0",
+      "terminal": "#c4ccd4",
+      "open-done": "#c4ccd4",
+      "wrong-grasp": "#ff7272",
+      "ambiguous": "#ff7272",
+      "unlabeled": "#53606c",
+    };
+
+    const RAW_CLUSTER_COLORS = [
+      "#78a8ff", "#61d6c2", "#ffb15a", "#ad86ff",
+      "#4fd3e0", "#ff7f9d", "#9fca66", "#d39bff",
+    ];
+
+    function isReviewComplete(review) {
+      return review?.review_stage === "adjudicated";
+    }
+
+    function isAnnotationTarget(cluster) {
+      return Boolean(cluster?.annotation_target);
+    }
+
+    function resolvedAnnotation(cluster) {
+      if (!cluster) return {phase: "unlabeled", phrase: "Unlabeled", source: "none"};
+      const review = state.reviews.get(cluster.cluster_id);
+      if (review?.mixed_cluster || review?.visually_insufficient) {
+        return {
+          phase: "ambiguous",
+          phrase: review.human_phrase || (
+            review.mixed_cluster
+              ? "Mixed-phase cluster"
+              : "Visually insufficient"
+          ),
+          source: "human-blind-ambiguous",
+        };
+      }
+      if (review?.human_phase) {
+        return {
+          phase: review.human_phase,
+          phrase: review.human_phrase || "Human phase recorded",
+          source: `human-${review.review_stage}`,
+        };
+      }
+      return {
+        phase: "unlabeled",
+        phrase: isAnnotationTarget(cluster)
+          ? "Blind review pending"
+          : "Outside annotation scope",
+        source: isAnnotationTarget(cluster) ? "blind-pending" : "none",
+      };
+    }
+
+    function colorForCluster(clusterId) {
+      const cluster = state.data.clusters.find((item) => item.cluster_id === clusterId);
+      const resolved = resolvedAnnotation(cluster);
+      if (resolved.phase !== "unlabeled") {
+        return PHASE_COLORS[resolved.phase] || "#53606c";
+      }
+      return RAW_CLUSTER_COLORS[
+        Math.abs(Number(cluster?.cluster_label || 0)) % RAW_CLUSTER_COLORS.length
+      ];
+    }
+
+    function stylePhasePill(element, phase) {
+      const color = PHASE_COLORS[phase] || "#94a0ad";
+      element.style.color = color;
+      element.style.borderColor = `${color}66`;
+      element.style.background = `${color}14`;
+    }
+
+    function currentCluster() {
+      return state.data.clusters.find((item) => item.cluster_id === state.clusterId) || null;
+    }
+
+    function currentSample() {
+      return state.data.samples[state.sampleId] || null;
+    }
+
+    function updateReviewStatus() {
+      const cluster = currentCluster();
+      const existing = cluster ? state.reviews.get(cluster.cluster_id) : null;
+      const status = $("reviewStatus");
+      if (!isAnnotationTarget(cluster)) {
+        status.textContent = "Exploration only";
+      } else if (state.dirty) {
+        status.textContent = "Unsaved changes";
+      } else if (existing?.review_stage === "blind_recorded") {
+        status.textContent = "Blind assessment locked · adjudication pending";
+      } else {
+        status.textContent = isReviewComplete(existing)
+          ? `Completed · ${existing.verdict}`
+          : "Blind review pending";
+      }
+      status.classList.toggle("review-status-unsaved", state.dirty);
+    }
+
+    function markReviewDirty(dirty = true) {
+      state.dirty = dirty;
+      updateReviewStatus();
+    }
+
+    function confirmDiscardReview() {
+      if (!state.dirty) return true;
+      const discard = window.confirm(
+        "This cluster has unsaved review changes. Discard them and continue?"
+      );
+      if (discard) markReviewDirty(false);
+      return discard;
+    }
+
+    function clustersForTask() {
+      return state.data.clusters.filter((item) => item.task_description === state.task);
+    }
+
+    function clusterEpisodeCount(cluster) {
+      return Math.round(cluster.episode_coverage * cluster.total_task_episodes);
+    }
+
+    function annotationCoverageThreshold() {
+      const threshold = Number(
+        state.data?.meta?.annotation_min_episode_coverage ?? 0.3
+      );
+      return Number.isFinite(threshold) ? threshold : 0.3;
+    }
+
+    function annotationMinEpisodes() {
+      const totalEpisodes = clustersForTask()[0]?.total_task_episodes || 30;
+      return Math.ceil(
+        totalEpisodes * annotationCoverageThreshold() - Number.EPSILON
+      );
+    }
+
+    function visibleClustersForTask(options = {}) {
+      const phaseLabeledOnly = $("annotatedOnly")?.checked || false;
+      const minEpisodes = annotationMinEpisodes();
+      return clustersForTask().filter((cluster) => {
+        if (clusterEpisodeCount(cluster) < minEpisodes) return false;
+        if (phaseLabeledOnly && !isAnnotationTarget(cluster)) return false;
+        if (!options.ignoreReviewFilter && state.reviewFilter === "unreviewed") {
+          if (
+            !isAnnotationTarget(cluster)
+            || isReviewComplete(state.reviews.get(cluster.cluster_id))
+          ) return false;
+        }
+        if (!options.ignoreReviewFilter && state.reviewFilter === "reviewed") {
+          if (
+            !isAnnotationTarget(cluster)
+            || !isReviewComplete(state.reviews.get(cluster.cluster_id))
+          ) return false;
+        }
+        if (
+          !options.ignorePhase
+          && state.phaseFilter
+          && resolvedAnnotation(cluster).phase !== state.phaseFilter
+        ) return false;
+        return true;
+      });
+    }
+
+    function renderQueueFilter() {
+      const base = visibleClustersForTask({
+        ignoreReviewFilter: true,
+        ignorePhase: true,
+      });
+      const annotated = base.filter(isAnnotationTarget);
+      const counts = {
+        all: base.length,
+        unreviewed: annotated.filter(
+          (cluster) => !isReviewComplete(state.reviews.get(cluster.cluster_id))
+        ).length,
+        reviewed: annotated.filter(
+          (cluster) => isReviewComplete(state.reviews.get(cluster.cluster_id))
+        ).length,
+      };
+      document.querySelectorAll("[data-review-filter]").forEach((button) => {
+        const filter = button.dataset.reviewFilter;
+        button.textContent =
+          `${filter[0].toUpperCase() + filter.slice(1)} · ${counts[filter]}`;
+        const active = filter === state.reviewFilter;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+    }
+
+    function renderCoverageControl() {
+      const totalEpisodes = clustersForTask()[0]?.total_task_episodes || 30;
+      const minEpisodes = annotationMinEpisodes();
+      const percent = Math.round(100 * annotationCoverageThreshold());
+      $("coverageValue").textContent = `≥ ${minEpisodes} / ${totalEpisodes} · ${percent}%`;
+    }
+
+    function applyCoverageScope(selectFallback) {
+      renderCoverageControl();
+      const visible = visibleClustersForTask();
+      if (
+        selectFallback
+        && visible.length
+        && !visible.some((cluster) => cluster.cluster_id === state.clusterId)
+      ) {
+        selectCluster(visible[0].cluster_id, {autoplay: false});
+        return;
+      }
+      renderClusterList();
+      renderScatter();
+    }
+
+
+    function orderedMembers(cluster) {
+      if (!cluster) return [];
+      if (Array.isArray(cluster.playable_sample_ids)) return cluster.playable_sample_ids;
+      const representatives = new Set(cluster.representative_sample_ids);
+      return [
+        ...cluster.representative_sample_ids,
+        ...cluster.member_sample_ids.filter((id) => !representatives.has(id)),
+      ];
+    }
+
+    function frameUrl(sampleId, index) {
+      return `/api/frame?sample_id=${encodeURIComponent(sampleId)}&index=${index}`;
+    }
+
+    function stopPlayback() {
+      if (state.timer) window.clearInterval(state.timer);
+      state.timer = null;
+      $("playPause").textContent = "▶";
+    }
+
+    function startPlayback() {
+      const sample = currentSample();
+      if (!sample?.media_available) return;
+      const frameCount = sample.num_frames;
+      if (!frameCount) return;
+      stopPlayback();
+      const delay = Number($("speedSelect").value);
+      state.timer = window.setInterval(
+        () => setFrame((state.frame + 1) % frameCount),
+        delay
+      );
+      $("playPause").textContent = "❚❚";
+    }
+
+    function setFrame(index) {
+      const sample = currentSample();
+      if (!sample?.media_available) return;
+      const frameCount = sample.num_frames;
+      if (!frameCount) return;
+      state.frame = Math.max(0, Math.min(frameCount - 1, index));
+      $("heroFrame").src = frameUrl(sample.sample_id, state.frame);
+      $("frameCounter").textContent = `${state.frame + 1} / ${frameCount}`;
+      document.querySelectorAll(".thumb").forEach((button, buttonIndex) => {
+        button.classList.toggle("active", buttonIndex === state.frame);
+      });
+    }
+
+    function selectSample(sampleId, options = {}) {
+      const sample = state.data.samples[sampleId];
+      if (!sample) return false;
+      if (!sample.media_available) {
+        const selected = selectCluster(sample.cluster_id, options);
+        if (selected) {
+          showToast(
+            `${state.data.meta.version_label} uses representative clips for this cluster`
+          );
+        }
+        return selected;
+      }
+      const clusterChanged = sample.cluster_id !== state.clusterId;
+      if (clusterChanged && !confirmDiscardReview()) return false;
+      if (clusterChanged) {
+        state.phrasePhaseConsistent = null;
+        markReviewDirty(false);
+      }
+      state.task = sample.task_description;
+      state.clusterId = sample.cluster_id;
+      state.sampleId = sampleId;
+      state.frame = 0;
+      stopPlayback();
+      $("taskSelect").value = state.task;
+      renderAll(options.skipScatter === true, !clusterChanged);
+      if (options.autoplay !== false) startPlayback();
+      return true;
+    }
+
+    function selectCluster(clusterId, options = {}) {
+      const cluster = state.data.clusters.find((item) => item.cluster_id === clusterId);
+      if (!cluster) return false;
+      const clusterChanged = clusterId !== state.clusterId;
+      if (clusterChanged && !confirmDiscardReview()) return false;
+      if (clusterChanged) {
+        state.phrasePhaseConsistent = null;
+        markReviewDirty(false);
+      }
+      const playable = orderedMembers(cluster);
+      state.task = cluster.task_description;
+      state.clusterId = clusterId;
+      state.sampleId = playable[0] || null;
+      state.frame = 0;
+      stopPlayback();
+      $("taskSelect").value = state.task;
+      renderAll(false, !clusterChanged);
+      if (state.sampleId && options.autoplay !== false) {
+        startPlayback();
+      }
+      return true;
+    }
+
+    function renderTaskOptions() {
+      $("taskSelect").replaceChildren();
+      state.data.tasks.forEach((task) => {
+        const option = document.createElement("option");
+        option.value = task.task_description;
+        option.textContent = `${task.task_description}  ·  ${task.num_annotated_clusters} targets`;
+        $("taskSelect").append(option);
+      });
+      $("taskSelect").value = state.task;
+    }
+
+    function renderProgress() {
+      const targets = state.data.clusters.filter(isAnnotationTarget);
+      const reviewed = targets.filter(
+        (cluster) => isReviewComplete(state.reviews.get(cluster.cluster_id))
+      ).length;
+      $("progressText").textContent = `${reviewed} / ${targets.length}`;
+      $("progressFill").style.width = `${targets.length ? 100 * reviewed / targets.length : 0}%`;
+    }
+
+    function phaseLabelsForTask() {
+      const annotated = clustersForTask().find(isAnnotationTarget);
+      const labels = annotated?.review_protocol?.allowed_phase_labels || [];
+      return [...labels, "ambiguous", "unlabeled"];
+    }
+
+    function phaseSortIndex(phase) {
+      const labels = phaseLabelsForTask();
+      const index = labels.indexOf(phase);
+      return index >= 0 ? index : labels.length;
+    }
+
+    function appendPhaseGroupHeading(list, rows, phase) {
+      const phaseRows = rows.filter(
+        (cluster) => resolvedAnnotation(cluster).phase === phase
+      );
+      const heading = document.createElement("div");
+      heading.className = "phase-group-heading";
+      const title = document.createElement("span");
+      title.textContent = phase;
+      title.style.color = PHASE_COLORS[phase] || "#94a0ad";
+      const meta = document.createElement("small");
+      const samples = phaseRows.reduce((total, cluster) => total + cluster.num_members, 0);
+      meta.textContent = `${phaseRows.length} clusters · ${samples} samples`;
+      heading.append(title, meta);
+      list.append(heading);
+    }
+
+    function renderClusterList() {
+      renderQueueFilter();
+      const query = $("clusterSearch").value.trim().toLowerCase();
+      let rows = visibleClustersForTask().filter((cluster) => {
+        const resolved = resolvedAnnotation(cluster);
+        const haystack = [
+          cluster.cluster_id,
+          resolved.phrase,
+          resolved.phase,
+        ].join(" ").toLowerCase();
+        return haystack.includes(query);
+      });
+      rows = rows.sort((left, right) => {
+        if (state.groupMode === "phase") {
+          const phaseDelta = phaseSortIndex(resolvedAnnotation(left).phase)
+            - phaseSortIndex(resolvedAnnotation(right).phase);
+          if (phaseDelta) return phaseDelta;
+        }
+        return left.cluster_id.localeCompare(right.cluster_id);
+      });
+      $("clusterCount").textContent = `${rows.length} / ${clustersForTask().length}`;
+      const list = $("clusterList");
+      list.replaceChildren();
+      if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No clusters match the current search and review filters.";
+        list.append(empty);
+        return;
+      }
+      let lastPhase = null;
+      rows.forEach((cluster) => {
+        const resolved = resolvedAnnotation(cluster);
+        if (
+          state.groupMode === "phase"
+          && resolved.phase !== lastPhase
+        ) {
+          appendPhaseGroupHeading(list, rows, resolved.phase);
+          lastPhase = resolved.phase;
+        }
+        const button = document.createElement("button");
+        button.className = "cluster-card" + (cluster.cluster_id === state.clusterId ? " selected" : "");
+        button.addEventListener("click", () => selectCluster(cluster.cluster_id));
+
+        const top = document.createElement("div");
+        top.className = "cluster-top";
+        const dot = document.createElement("span");
+        dot.className = "color-dot";
+        dot.style.background = colorForCluster(cluster.cluster_id);
+        const id = document.createElement("span");
+        id.className = "cluster-id";
+        id.textContent = cluster.cluster_id.split("_cluster_").pop();
+        top.append(dot, id);
+        const review = state.reviews.get(cluster.cluster_id);
+        if (review) {
+          const mark = document.createElement("span");
+          const reviewMark = isReviewComplete(review)
+            ? review.verdict
+            : "blind-recorded";
+          mark.className = `review-mark ${reviewMark}`;
+          mark.textContent = reviewMark.replace("-", " ");
+          top.append(mark);
+        }
+
+        const phrase = document.createElement("div");
+        phrase.className = "cluster-phrase" + (resolved.phase === "unlabeled" ? " unlabeled" : "");
+        phrase.textContent = resolved.phrase;
+
+        const meta = document.createElement("div");
+        meta.className = "cluster-meta";
+        if (resolved.phase !== "unlabeled") {
+          const phase = document.createElement("span");
+          phase.className = "phase-pill";
+          phase.textContent = resolved.phase;
+          stylePhasePill(phase, resolved.phase);
+          meta.append(phase);
+        }
+        const members = document.createElement("span");
+        members.textContent = `n=${cluster.num_members}`;
+        const coverage = document.createElement("span");
+        coverage.textContent = `coverage ${Math.round(cluster.episode_coverage * 100)}%`;
+        meta.append(members, coverage);
+        button.append(top, phrase, meta);
+        list.append(button);
+      });
+    }
+
+    function renderPhaseLegend() {
+      const legend = $("phaseLegend");
+      legend.replaceChildren();
+      const scoped = visibleClustersForTask({ignorePhase: true});
+      const labels = phaseLabelsForTask().filter(
+        (label) => label !== "unlabeled" || scoped.some(
+          (cluster) => resolvedAnnotation(cluster).phase === "unlabeled"
+        )
+      );
+      const counts = new Map(labels.map((label) => [label, {clusters: 0, samples: 0}]));
+      scoped.forEach((cluster) => {
+        const phase = resolvedAnnotation(cluster).phase;
+        const count = counts.get(phase) || {clusters: 0, samples: 0};
+        counts.set(phase, {clusters: count.clusters + 1, samples: count.samples + cluster.num_members});
+      });
+      labels.forEach((label) => {
+        const item = document.createElement("button");
+        const count = counts.get(label) || {clusters: 0, samples: 0};
+        item.type = "button";
+        item.className = "legend-item" + (count.clusters ? "" : " empty")
+          + (state.phaseFilter === label ? " selected" : "");
+        item.title = state.phaseFilter === label
+          ? "Clear this phase filter"
+          : `Show only ${label} · ${count.clusters} clusters · ${count.samples} samples`;
+        const swatch = document.createElement("span");
+        swatch.className = "legend-swatch";
+        swatch.style.background = PHASE_COLORS[label] || "#53606c";
+        const text = document.createElement("span");
+        text.textContent = `${label} · C${count.clusters} · S${count.samples}`;
+        item.append(swatch, text);
+        item.addEventListener("click", () => {
+          const nextFilter = state.phaseFilter === label ? null : label;
+          const currentRemainsVisible = !nextFilter
+            || resolvedAnnotation(currentCluster()).phase === nextFilter;
+          if (!currentRemainsVisible && !confirmDiscardReview()) return;
+          state.phaseFilter = nextFilter;
+          applyCoverageScope(true);
+        });
+        legend.append(item);
+      });
+    }
+
+
+    function renderScatter() {
+      renderPhaseLegend();
+      const svg = $("scatter");
+      svg.replaceChildren();
+      const visibleClusters = visibleClustersForTask();
+      const visibleClusterIds = new Set(
+        visibleClusters.map((cluster) => cluster.cluster_id)
+      );
+      const samples = Object.values(state.data.samples).filter(
+        (sample) =>
+          sample.task_description === state.task
+          && visibleClusterIds.has(sample.cluster_id)
+      );
+      const scatterExtent = 540;
+      const scatterLeft = (1000 - scatterExtent) / 2;
+      const scatterTop = (600 - scatterExtent) / 2;
+      const guideGroup = document.createElementNS(svgNS, "g");
+      guideGroup.setAttribute("aria-hidden", "true");
+      const guideRect = document.createElementNS(svgNS, "rect");
+      guideRect.setAttribute("x", String(scatterLeft));
+      guideRect.setAttribute("y", String(scatterTop));
+      guideRect.setAttribute("width", String(scatterExtent));
+      guideRect.setAttribute("height", String(scatterExtent));
+      guideRect.setAttribute("rx", "12");
+      guideRect.setAttribute("fill", "rgba(8,12,15,.42)");
+      guideRect.setAttribute("stroke", "rgba(148,160,173,.24)");
+      guideRect.setAttribute("stroke-width", "1");
+      guideGroup.append(guideRect);
+      ["horizontal", "vertical"].forEach((direction) => {
+        const line = document.createElementNS(svgNS, "line");
+        if (direction === "horizontal") {
+          line.setAttribute("x1", String(scatterLeft));
+          line.setAttribute("x2", String(scatterLeft + scatterExtent));
+          line.setAttribute("y1", "300");
+          line.setAttribute("y2", "300");
+        } else {
+          line.setAttribute("x1", "500");
+          line.setAttribute("x2", "500");
+          line.setAttribute("y1", String(scatterTop));
+          line.setAttribute("y2", String(scatterTop + scatterExtent));
+        }
+        line.setAttribute("stroke", "rgba(148,160,173,.13)");
+        line.setAttribute("stroke-dasharray", "5 7");
+        guideGroup.append(line);
+      });
+      svg.append(guideGroup);
+      samples.forEach((sample) => {
+        const cluster = state.data.clusters.find(
+          (item) => item.cluster_id === sample.cluster_id
+        );
+        const selectedCluster = sample.cluster_id === state.clusterId;
+        const selectedSample = sample.sample_id === state.sampleId;
+        const annotated = isAnnotationTarget(cluster);
+        const circle = document.createElementNS(svgNS, "circle");
+        circle.setAttribute(
+          "cx",
+          String(scatterLeft + ((sample.projection[0] + 1) / 2) * scatterExtent)
+        );
+        circle.setAttribute(
+          "cy",
+          String(
+            scatterTop + (1 - (sample.projection[1] + 1) / 2) * scatterExtent
+          )
+        );
+        circle.setAttribute(
+          "r",
+          selectedSample
+            ? "9"
+            : selectedCluster
+              ? "5.5"
+              : sample.is_representative
+                ? "4"
+                : "2.8"
+        );
+        circle.setAttribute("fill", colorForCluster(sample.cluster_id));
+        const baseOpacity = annotated ? ".52" : ".20";
+        circle.setAttribute(
+          "opacity",
+          selectedCluster ? "1" : sample.media_available ? baseOpacity : ".16"
+        );
+        circle.setAttribute(
+          "stroke",
+          selectedSample
+            ? "#ffffff"
+            : sample.media_available && sample.is_representative
+              ? "#d6dde4"
+              : "none"
+        );
+        circle.setAttribute("stroke-width", selectedSample ? "2.5" : "1");
+        circle.style.cursor = "pointer";
+        circle.addEventListener("click", () => selectSample(sample.sample_id));
+        circle.addEventListener("mouseenter", (event) => {
+          const tooltip = $("tooltip");
+          const phase = resolvedAnnotation(cluster).phase;
+          const mediaHint = sample.media_available
+            ? "playable"
+            : "opens representative clip";
+          tooltip.textContent = `${phase} · cluster ${sample.cluster_id.split("_cluster_").pop()} · ${mediaHint} · temporal metadata hidden`;
+          tooltip.style.display = "block";
+          tooltip.style.left = `${event.clientX + 12}px`;
+          tooltip.style.top = `${event.clientY + 12}px`;
+        });
+        circle.addEventListener("mousemove", (event) => {
+          $("tooltip").style.left = `${event.clientX + 12}px`;
+          $("tooltip").style.top = `${event.clientY + 12}px`;
+        });
+        circle.addEventListener("mouseleave", () => {
+          $("tooltip").style.display = "none";
+        });
+        svg.append(circle);
+      });
+      const task = state.data.tasks.find(
+        (item) => item.task_description === state.task
+      );
+      const activeScope = [
+        state.reviewFilter !== "all" ? state.reviewFilter : null,
+        state.phaseFilter,
+      ].filter(Boolean).join(" · ");
+      $("scatterSubtitle").textContent = `${samples.length}/${task.num_samples} samples · ${task.num_playable_samples} playable in ${state.data.meta.version_id} · ${visibleClusters.length}/${task.num_clusters} clusters · annotation scope ≥ ${annotationMinEpisodes()} episodes · 7-label phase${activeScope ? ` · filter: ${activeScope}` : ""} · ${state.data.meta.projection_method.toUpperCase()} of C0`;
+    }
+
+    function renderPlayer() {
+      const sample = currentSample();
+      const cluster = currentCluster();
+      const multiview = state.data.meta.media_layout.toLowerCase().includes("triptych");
+      $("mediaBadge").textContent = state.data.meta.version_label;
+      $("timeline").classList.toggle("multiview", multiview);
+      $("heroWrap").classList.toggle("multiview", multiview);
+      [
+        "playPause",
+        "firstFrame",
+        "previousFrame",
+        "nextFrame",
+        "previousSample",
+        "nextSample",
+      ].forEach((id) => {
+        $(id).disabled = !sample;
+      });
+      if (!sample || !cluster) {
+        $("playerSubtitle").textContent = "No playable media for this cluster";
+        $("sampleKind").textContent = state.data.meta.media_layout;
+        $("sampleId").textContent = "—";
+        $("sampleMeta").replaceChildren();
+        $("timeline").replaceChildren();
+        $("heroFrame").removeAttribute("src");
+        $("frameCounter").textContent = "0 / 0 · no media";
+        return;
+      }
+      const members = orderedMembers(cluster);
+      $("playerSubtitle").textContent = `${cluster.cluster_id} · playable ${members.indexOf(sample.sample_id) + 1}/${members.length}`;
+      $("sampleKind").textContent = multiview
+        ? "Representative multiview clip"
+        : sample.is_representative
+          ? "Representative single-left clip"
+          : "Cluster member · single-left";
+      $("sampleId").textContent = `Clip ${members.indexOf(sample.sample_id) + 1}`;
+      const values = [
+        ["Condition", state.data.meta.condition.id],
+        ["Human view", state.data.meta.media_layout],
+        ["Model view", state.data.meta.condition.annotation_view || "not recorded"],
+        ["Cluster view", state.data.meta.condition.clustering_view || "not recorded"],
+        ["AWE anchor", state.data.meta.condition.awe_anchor || "not recorded"],
+        ["Cluster", cluster.cluster_id.split("_cluster_").pop()],
+        ["Frames", `${sample.num_frames} chronological views`],
+        ["Center", `frame ${Math.ceil(sample.num_frames / 2)} / ${sample.num_frames}`],
+      ];
+      const meta = $("sampleMeta");
+      meta.replaceChildren();
+      values.forEach(([key, value]) => {
+        const label = document.createElement("span");
+        label.textContent = key;
+        const content = document.createElement("b");
+        content.textContent = String(value);
+        meta.append(label, content);
+      });
+
+      const timeline = $("timeline");
+      timeline.replaceChildren();
+      Array.from({length: sample.num_frames}, (_, index) => index).forEach((index) => {
+        const button = document.createElement("button");
+        button.className = "thumb" + (index === state.frame ? " active" : "");
+        button.title = index === Math.floor(sample.num_frames / 2)
+          ? `Frame ${index + 1} · temporal center`
+          : `Frame ${index + 1}`;
+        const image = document.createElement("img");
+        image.src = frameUrl(sample.sample_id, index);
+        image.alt = `${state.data.meta.version_label} frame ${index + 1}`;
+        button.append(image);
+        button.addEventListener("click", () => {
+          stopPlayback();
+          setFrame(index);
+        });
+        timeline.append(button);
+      });
+      setFrame(state.frame);
+    }
+
+    function appendReviewStep(body, step, message) {
+      const banner = document.createElement("div");
+      banner.className = "review-step";
+      const title = document.createElement("b");
+      title.textContent = step;
+      const text = document.createElement("span");
+      text.textContent = message;
+      banner.append(title, text);
+      body.append(banner);
+    }
+
+    function appendPhaseReference(body, cluster, highlightedPhase = null) {
+      const protocol = cluster.review_protocol;
+      const reference = document.createElement("details");
+      reference.className = "phase-reference";
+      reference.open = localStorage.getItem("eventAtlasPhaseGuideOpen") !== "false";
+      reference.innerHTML = `<summary>Visual phase boundary guide · ${protocol.allowed_phase_labels.length} labels</summary>`;
+      const guideList = document.createElement("div");
+      guideList.className = "phase-guide-list";
+      protocol.allowed_phase_labels.forEach((phase) => {
+        const row = document.createElement("div");
+        row.className = "phase-guide-row" + (
+          phase === highlightedPhase ? " active" : ""
+        );
+        row.dataset.phase = phase;
+        row.innerHTML = "<b></b><span></span>";
+        row.querySelector("b").textContent = phase;
+        row.querySelector("span").textContent =
+          protocol.phase_descriptions[phase]
+          || "Use the shared visual state at the temporal center.";
+        guideList.append(row);
+      });
+      reference.append(guideList);
+      reference.addEventListener("toggle", () => {
+        localStorage.setItem("eventAtlasPhaseGuideOpen", String(reference.open));
+      });
+      body.append(reference);
+    }
+
+    function highlightPhaseGuide(phase) {
+      document.querySelectorAll(".phase-guide-row").forEach((row) => {
+        row.classList.toggle("active", row.dataset.phase === phase);
+      });
+    }
+
+    function appendAssessmentCard(body, review) {
+      const card = document.createElement("div");
+      card.className = "annotation-card human-card";
+      card.innerHTML = `
+        <div class="annotation-label">Locked independent assessment</div>
+        <div class="annotation-phrase"></div>
+        <div class="annotation-meta"><span class="phase-pill"></span></div>`;
+      card.querySelector(".annotation-phrase").textContent =
+        review.human_phrase || (
+          review.mixed_cluster ? "Mixed-phase cluster" : "Visual evidence insufficient"
+        );
+      const phase = review.human_phase || "ambiguous";
+      card.querySelector(".phase-pill").textContent = phase;
+      stylePhasePill(card.querySelector(".phase-pill"), phase);
+      body.append(card);
+    }
+
+    function appendModelCard(body, cluster, annotation) {
+      const card = document.createElement("div");
+      card.className = "annotation-card";
+      card.innerHTML = `
+        <div class="annotation-label">Gemini annotation · revealed after lock</div>
+        <div class="annotation-phrase"></div>
+        <div class="annotation-meta">
+          <span class="phase-pill"></span>
+          <span class="model-provenance"></span>
+        </div>`;
+      card.querySelector(".annotation-phrase").textContent = annotation.phrase;
+      card.querySelector(".phase-pill").textContent = annotation.phase;
+      stylePhasePill(card.querySelector(".phase-pill"), annotation.phase);
+      card.querySelector(".model-provenance").textContent =
+        `${annotation.model} · ${annotation.prompt_version} · ${state.data.meta.condition.annotation_view || "view unrecorded"} · coverage ${Math.round(cluster.episode_coverage * 100)}%`;
+      body.append(card);
+    }
+
+    function appendReviewSummary(body, review) {
+      const summary = document.createElement("div");
+      summary.className = "review-summary";
+      const values = [
+        ["Final status", review.verdict],
+        ["Human phase", review.human_phase || "not canonical"],
+        ["Model phase", review.model_phase],
+        ["Phase corrected", review.phase_corrected === null ? "n/a" : review.phase_corrected ? "yes" : "no"],
+        [
+          "Phrase ↔ phase",
+          review.phrase_phase_consistent === null
+            || review.phrase_phase_consistent === undefined
+            ? "not recorded"
+            : review.phrase_phase_consistent
+              ? "consistent"
+              : "inconsistent",
+        ],
+        ["Mixed cluster", review.mixed_cluster ? "yes" : "no"],
+        ["Visual evidence", review.visually_insufficient ? "insufficient" : "sufficient"],
+      ];
+      values.forEach(([key, value]) => {
+        const label = document.createElement("span");
+        label.textContent = key;
+        const content = document.createElement("b");
+        content.textContent = value;
+        summary.append(label, content);
+      });
+      body.append(summary);
+    }
+
+    function renderBlindReview(body, cluster) {
+      appendReviewStep(
+        body,
+        "Step 1",
+        `Judge only the ${state.data.meta.media_layout} human-reference clips. Gemini used ${state.data.meta.condition.annotation_view || "an unrecorded view"} and remains withheld until this assessment is saved and locked.`
+      );
+      appendPhaseReference(body, cluster);
+
+      const phaseField = document.createElement("label");
+      phaseField.className = "field";
+      phaseField.innerHTML = '<span>Independent human phase</span><select id="humanPhase"><option value="">Select a visual phase…</option></select>';
+      cluster.review_protocol.allowed_phase_labels.forEach((phase) => {
+        const option = document.createElement("option");
+        option.value = phase;
+        option.textContent = phase;
+        phaseField.querySelector("select").append(option);
+      });
+      body.append(phaseField);
+
+      const phraseField = document.createElement("label");
+      phraseField.className = "field";
+      phraseField.innerHTML = '<span>Independent human phrase</span><input id="humanPhrase" placeholder="Short shared center event or state">';
+      body.append(phraseField);
+
+      const flags = document.createElement("div");
+      flags.className = "flag-grid";
+      flags.innerHTML = `
+        <label class="flag-option">
+          <input id="mixedCluster" type="checkbox">
+          <span><strong>Mixed cluster</strong>Representatives do not share one visual phase.</span>
+        </label>
+        <label class="flag-option">
+          <input id="visuallyInsufficient" type="checkbox">
+          <span><strong>Visually insufficient</strong>The views cannot support a reliable phase judgment.</span>
+        </label>`;
+      body.append(flags);
+
+      const reviewerField = document.createElement("label");
+      reviewerField.className = "field";
+      reviewerField.innerHTML = '<span>Reviewer</span><input id="reviewer" placeholder="name or initials">';
+      reviewerField.querySelector("input").value =
+        localStorage.getItem("eventAtlasReviewer") || "";
+      body.append(reviewerField);
+
+      const notesField = document.createElement("label");
+      notesField.className = "field";
+      notesField.innerHTML = '<span>Blind evidence notes</span><textarea id="reviewNotes" placeholder="Visible motion, contact, support, disagreement, or uncertainty"></textarea>';
+      body.append(notesField);
+
+      const actions = document.createElement("div");
+      actions.className = "review-actions";
+      actions.innerHTML = '<button id="saveReview" class="solid-btn">Lock assessment + reveal Gemini</button>';
+      body.append(actions);
+      $("saveReview").addEventListener("click", () => saveReview(false));
+      ["humanPhrase", "reviewer", "reviewNotes"].forEach((id) => {
+        $(id).addEventListener("input", () => {
+          markReviewDirty();
+          updateSaveControls();
+        });
+      });
+      $("humanPhase").addEventListener("change", () => {
+        markReviewDirty();
+        highlightPhaseGuide($("humanPhase").value);
+        updateSaveControls();
+      });
+      ["mixedCluster", "visuallyInsufficient"].forEach((id) => {
+        $(id).addEventListener("change", () => {
+          markReviewDirty();
+          updateSaveControls();
+        });
+      });
+    }
+
+    function choosePhraseConsistency(value) {
+      state.phrasePhaseConsistent = value;
+      document.querySelectorAll(".agreement-choice").forEach((button) => {
+        const selected = button.dataset.consistent === String(value);
+        button.classList.toggle("selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+      markReviewDirty();
+      updateSaveControls();
+    }
+
+    function renderAdjudication(body, cluster, review, annotation) {
+      appendReviewStep(
+        body,
+        isReviewComplete(review) ? "Complete" : "Step 2",
+        isReviewComplete(review)
+          ? "The independent assessment is locked and model adjudication is complete."
+          : "Gemini is now revealed. Judge whether its phrase and phase describe the same shared center interpretation."
+      );
+      appendAssessmentCard(body, review);
+      appendModelCard(body, cluster, annotation);
+      appendPhaseReference(body, cluster, review.human_phase);
+
+      if (isReviewComplete(review)) {
+        appendReviewSummary(body, review);
+        return;
+      }
+
+      const label = document.createElement("div");
+      label.className = "section-label";
+      label.textContent = "Does the Gemini phrase match its own phase?";
+      body.append(label);
+
+      const choices = document.createElement("div");
+      choices.className = "agreement-grid";
+      [
+        [true, "Consistent", "Phrase and phase refer to the same visual interpretation."],
+        [false, "Inconsistent", "Phrase implies a different phase or unsupported event."],
+      ].forEach(([value, title, subtitle]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "agreement-choice";
+        button.dataset.consistent = String(value);
+        button.setAttribute("aria-pressed", "false");
+        button.innerHTML = `<strong>${title}</strong>${subtitle}`;
+        button.addEventListener("click", () => choosePhraseConsistency(value));
+        choices.append(button);
+      });
+      body.append(choices);
+
+      const notesField = document.createElement("label");
+      notesField.className = "field";
+      notesField.innerHTML = '<span>Adjudication notes</span><textarea id="adjudicationNotes" placeholder="Why the model phrase/phase agrees or fails"></textarea>';
+      body.append(notesField);
+      $("adjudicationNotes").addEventListener("input", () => markReviewDirty());
+
+      const actions = document.createElement("div");
+      actions.className = "review-actions";
+      actions.innerHTML = '<button id="saveReview" class="solid-btn">Finalize review</button><button id="reviewNext" class="outline-btn">Finalize + next</button>';
+      body.append(actions);
+      $("saveReview").addEventListener("click", () => saveReview(false));
+      $("reviewNext").addEventListener("click", () => saveReview(true));
+    }
+
+    function updateSaveControls() {
+      const cluster = currentCluster();
+      const existing = cluster ? state.reviews.get(cluster.cluster_id) : null;
+      let enabled = false;
+      if (!state.saving && !existing) {
+        const unresolved = Boolean(
+          $("mixedCluster")?.checked || $("visuallyInsufficient")?.checked
+        );
+        enabled = unresolved || Boolean(
+          $("humanPhase")?.value && $("humanPhrase")?.value.trim()
+        );
+      } else if (!state.saving && existing?.review_stage === "blind_recorded") {
+        enabled = typeof state.phrasePhaseConsistent === "boolean";
+      }
+      ["saveReview", "reviewNext"].forEach((id) => {
+        if ($(id)) $(id).disabled = !enabled;
+      });
+      if ($("saveReview") && state.saving) {
+        $("saveReview").textContent = "Saving…";
+      }
+    }
+
+    function renderReview() {
+      const cluster = currentCluster();
+      const body = $("reviewBody");
+      body.replaceChildren();
+      if (!isAnnotationTarget(cluster)) {
+        $("reviewStatus").textContent = "Exploration only";
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "This cluster is outside the fixed annotation coverage. Only available representative clips can be explored; no model or human label is required.";
+        body.append(empty);
+        return;
+      }
+      const existing = state.reviews.get(cluster.cluster_id);
+      state.phrasePhaseConsistent = existing?.phrase_phase_consistent ?? null;
+      updateReviewStatus();
+      if (!existing) {
+        renderBlindReview(body, cluster);
+      } else {
+        const annotation = state.revealedAnnotations.get(cluster.cluster_id);
+        if (!annotation) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "The blind assessment is locked, but the model annotation could not be loaded.";
+          body.append(empty);
+          return;
+        }
+        renderAdjudication(body, cluster, existing, annotation);
+      }
+      state.dirty = false;
+      updateReviewStatus();
+      updateSaveControls();
+    }
+
+    async function postReview(payload) {
+      const response = await fetch("/api/review", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Review save failed");
+      state.reviews.set(payload.cluster_id, result.review);
+      state.revealedAnnotations.set(payload.cluster_id, result.annotation);
+      return result.review;
+    }
+
+    async function saveReview(goNext) {
+      const cluster = currentCluster();
+      if (!isAnnotationTarget(cluster) || state.saving) return;
+      const existing = state.reviews.get(cluster.cluster_id);
+      let payload;
+      if (!existing) {
+        const mixedCluster = $("mixedCluster").checked;
+        const visuallyInsufficient = $("visuallyInsufficient").checked;
+        if (
+          !mixedCluster
+          && !visuallyInsufficient
+          && (!$("humanPhase").value || !$("humanPhrase").value.trim())
+        ) {
+          showToast("Choose a human phase and phrase, or mark an uncertainty flag", true);
+          return;
+        }
+        const reviewer = $("reviewer").value.trim();
+        if (reviewer) localStorage.setItem("eventAtlasReviewer", reviewer);
+        payload = {
+          stage: "blind",
+          cluster_id: cluster.cluster_id,
+          reviewer,
+          notes: $("reviewNotes").value,
+          human_phrase: $("humanPhrase").value,
+          human_phase: $("humanPhase").value,
+          mixed_cluster: mixedCluster,
+          visually_insufficient: visuallyInsufficient,
+        };
+      } else {
+        if (typeof state.phrasePhaseConsistent !== "boolean") {
+          showToast("Record phrase-to-phase consistency before finalizing", true);
+          return;
+        }
+        payload = {
+          stage: "adjudication",
+          cluster_id: cluster.cluster_id,
+          phrase_phase_consistent: state.phrasePhaseConsistent,
+          adjudication_notes: $("adjudicationNotes")?.value || "",
+        };
+      }
+      state.saving = true;
+      updateSaveControls();
+      try {
+        const saved = await postReview(payload);
+        state.dirty = false;
+        showToast(
+          saved.review_stage === "blind_recorded"
+            ? "Blind assessment locked · Gemini revealed"
+            : `Review finalized · ${saved.verdict}`
+        );
+        renderProgress();
+        renderClusterList();
+        renderScatter();
+        if (goNext && isReviewComplete(saved)) {
+          selectNextUnreviewed();
+        } else {
+          renderReview();
+        }
+      } catch (error) {
+        showToast(error.message, true);
+      } finally {
+        state.saving = false;
+        updateSaveControls();
+      }
+    }
+
+    function selectNextUnreviewed() {
+      const targets = visibleClustersForTask({ignoreReviewFilter: true}).filter(
+        isAnnotationTarget
+      );
+      if (!targets.length) {
+        showToast("No phase-labeled clusters in the current coverage scope");
+        return;
+      }
+      const currentIndex = targets.findIndex((cluster) => cluster.cluster_id === state.clusterId);
+      for (let offset = 1; offset <= targets.length; offset += 1) {
+        const candidate = targets[(Math.max(currentIndex, -1) + offset) % targets.length];
+        if (!isReviewComplete(state.reviews.get(candidate.cluster_id))) {
+          selectCluster(candidate.cluster_id);
+          return;
+        }
+      }
+      showToast("All annotation targets have a decision");
+    }
+
+    function moveSample(delta) {
+      const cluster = currentCluster();
+      const members = orderedMembers(cluster);
+      if (!members.length) return;
+      const current = members.indexOf(state.sampleId);
+      selectSample(members[(current + delta + members.length) % members.length]);
+    }
+
+    function renderAll(skipScatter = false, preserveReview = false) {
+      renderCoverageControl();
+      renderProgress();
+      renderClusterList();
+      if (!skipScatter) renderScatter();
+      renderPlayer();
+      if (!preserveReview) renderReview();
+    }
+
+    function showToast(message, error = false) {
+      const toast = $("toast");
+      toast.textContent = message;
+      toast.classList.toggle("error", error);
+      toast.classList.add("show");
+      window.setTimeout(() => toast.classList.remove("show"), 2200);
+    }
+
+    async function downloadReviews() {
+      try {
+        const response = await fetch("/api/reviews");
+        const documentValue = await response.json();
+        if (!response.ok) throw new Error(documentValue.error || "Review export failed");
+        const blob = new Blob(
+          [JSON.stringify(documentValue, null, 2)],
+          {type: "application/json"}
+        );
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `human_cluster_reviews_${state.data.meta.version_id}.json`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }
+
+    function bindEvents() {
+      $("taskSelect").addEventListener("change", () => {
+        const nextTask = $("taskSelect").value;
+        if (!confirmDiscardReview()) {
+          $("taskSelect").value = state.task;
+          return;
+        }
+        state.task = nextTask;
+        state.phaseFilter = null;
+        const scoped = visibleClustersForTask();
+        const fallback = clustersForTask();
+        const choice = (
+          scoped.find((cluster) => isAnnotationTarget(cluster) && orderedMembers(cluster).length)
+          || scoped.find((cluster) => orderedMembers(cluster).length)
+          || fallback.find(
+            (cluster) => isAnnotationTarget(cluster) && orderedMembers(cluster).length
+          )
+          || fallback.find((cluster) => orderedMembers(cluster).length)
+        );
+        if (choice) selectCluster(choice.cluster_id);
+      });
+      $("clusterSearch").addEventListener("input", renderClusterList);
+      $("groupMode").addEventListener("change", () => {
+        state.groupMode = $("groupMode").value;
+        renderClusterList();
+      });
+      document.querySelectorAll("[data-review-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.reviewFilter === state.reviewFilter) return;
+          if (!confirmDiscardReview()) return;
+          state.reviewFilter = button.dataset.reviewFilter;
+          applyCoverageScope(true);
+        });
+      });
+      $("annotatedOnly").addEventListener(
+        "change",
+        () => applyCoverageScope(true)
+      );
+      $("playPause").addEventListener(
+        "click",
+        () => state.timer ? stopPlayback() : startPlayback()
+      );
+      $("firstFrame").addEventListener("click", () => {
+        stopPlayback();
+        setFrame(0);
+      });
+      $("previousFrame").addEventListener("click", () => {
+        stopPlayback();
+        setFrame(state.frame - 1);
+      });
+      $("nextFrame").addEventListener("click", () => {
+        stopPlayback();
+        setFrame(state.frame + 1);
+      });
+      $("speedSelect").addEventListener("change", () => {
+        if (state.timer) startPlayback();
+      });
+      $("previousSample").addEventListener("click", () => moveSample(-1));
+      $("nextSample").addEventListener("click", () => moveSample(1));
+      $("nextUnreviewed").addEventListener("click", selectNextUnreviewed);
+      $("downloadReviews").addEventListener("click", downloadReviews);
+      $("shortcutHelp").addEventListener("click", () => $("shortcutDialog").showModal());
+      $("shortcutClose").addEventListener("click", () => $("shortcutDialog").close());
+      window.addEventListener("beforeunload", (event) => {
+        if (!state.dirty) return;
+        event.preventDefault();
+        event.returnValue = "";
+      });
+      window.addEventListener("keydown", (event) => {
+        const activeTag = document.activeElement?.tagName || "";
+        const editing = ["INPUT", "TEXTAREA", "SELECT"].includes(activeTag);
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+          event.preventDefault();
+          saveReview(false);
+          return;
+        }
+        if (editing) return;
+        const key = event.key.toLowerCase();
+        if (event.key === "?") {
+          event.preventDefault();
+          $("shortcutDialog").showModal();
+        } else if (event.code === "Space") {
+          event.preventDefault();
+          state.timer ? stopPlayback() : startPlayback();
+        } else if (event.key === "ArrowLeft") {
+          stopPlayback();
+          setFrame(state.frame - 1);
+        } else if (event.key === "ArrowRight") {
+          stopPlayback();
+          setFrame(state.frame + 1);
+        } else if (key === "j") {
+          moveSample(1);
+        } else if (key === "k") {
+          moveSample(-1);
+        } else if (key === "n") {
+          selectNextUnreviewed();
+        } else if (
+          key === "y"
+          && state.reviews.get(state.clusterId)?.review_stage === "blind_recorded"
+        ) {
+          choosePhraseConsistency(true);
+        } else if (
+          key === "n"
+          && state.reviews.get(state.clusterId)?.review_stage === "blind_recorded"
+        ) {
+          choosePhraseConsistency(false);
+        } else if (/^[1-9]$/.test(event.key)) {
+          const frameIndex = Number(event.key) - 1;
+          if (frameIndex < (currentSample()?.num_frames || 0)) {
+            stopPlayback();
+            setFrame(frameIndex);
+          }
+        }
+      });
+    }
+
+    async function init() {
+      try {
+        const response = await fetch("/api/data");
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not load review data");
+        state.data = data;
+        state.reviews = new Map(
+          (data.review_document.reviews || []).map(
+            (review) => [review.cluster_id, review]
+          )
+        );
+        state.revealedAnnotations = new Map(
+          Object.entries(data.revealed_annotations || {})
+        );
+        state.task = data.tasks[0].task_description;
+        $("brandCondition").textContent = `/ ${data.meta.condition.label}`;
+        $("conditionEyebrow").textContent =
+          `Stage 3 · Blind audit · ${data.meta.condition.id}`;
+        document.title = `Event Atlas — ${data.meta.condition.id} Blind Review`;
+        renderTaskOptions();
+        bindEvents();
+        const first = data.clusters.find(
+          (cluster) =>
+            cluster.task_description === state.task
+            && isAnnotationTarget(cluster)
+            && orderedMembers(cluster).length
+        );
+        if (!first) throw new Error("No playable annotation target");
+        selectCluster(first.cluster_id);
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
