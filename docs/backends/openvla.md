@@ -1,4 +1,4 @@
-# openVLA pipeline
+# OpenVLA pipeline
 
 Closed-loop interpretability pipeline for the openVLA backbone on the
 LIBERO simulation suites.
@@ -7,10 +7,10 @@ LIBERO simulation suites.
 
 This is the public minimal sweep (LIBERO-Spatial, top-5 features
 per ranking, α = 0, 5 trials per task, seed 0), not the paper's
-full-scale experiment. The goal is to verify this codebase
-reproduces the qualitative ranking order observed in the reference
-research code at this sample size; small numerical gaps are
-expected.
+full-scale experiment. It is a one-seed diagnostic reproduction:
+the ranking order is recovered in this small configuration, but
+paper-scale replication and generalization are
+**confounded — 판정 보류**.
 
 | Configuration                  | SAE       | Feature lists  | Baseline SR | Δ event-aligned | Δ window-mean | Δ task-mean | Δ random-alive |
 |---|---|---|---:|---:|---:|---:|---:|
@@ -21,9 +21,18 @@ expected.
 ΔSR is in percentage points relative to each row's own baseline run.
 
 In the third row, only the SAE is held fixed, and every other step
-runs through this repository. Small gaps from the reference are
-expected: 50 rollouts per condition leave a few pp of sampling
-noise, and float32 / CUDA versions can also shift SR run-to-run.
+runs through this repository. Each condition has 5 trials/task × 10
+tasks = 50 suite episodes. The paper's activation collection uses 50
+rollouts/task and its Hooked SR protocol uses 10 rollouts/task; the exact
+per-feature rollout count behind Table 3 is not stated. This table has no
+confidence interval, so differences must not be attributed to sampling or
+runtime versions without a multi-seed comparison.
+
+To make a result row reproducible, retain the Event-SAE commit and
+dirty diff, external dependency commits, Hugging Face revision,
+`config.json` + `ae.pt` hashes, `candidates.jsonl`, the task-level
+`events.csv`, `stdout.log` with episode outcomes, seed, and the exact
+aggregation command. The summary table alone is not a provenance artifact.
 
 ## Installation
 
@@ -47,7 +56,9 @@ Three libraries installed editable into the conda env. Clone under
 `external/` at the repo root (already gitignored):
 
 ```bash
-cd external
+export EVENT_SAE_ROOT=/path/to/event-sae   # adjust to this checkout
+mkdir -p "$EVENT_SAE_ROOT/external"
+cd "$EVENT_SAE_ROOT/external"
 ```
 
 **(a) LIBERO** — sim benchmark:
@@ -55,6 +66,7 @@ cd external
 ```bash
 git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
 cd LIBERO
+git checkout 8f1084e3132a39270c3a13ebe37270a43ece2a01
 touch libero/__init__.py libero/lifelong/models/modules/__init__.py   # missing in upstream
 pip install -e .
 pip install robosuite==1.4.0 bddl==1.0.1 robomimic==0.2.0 mujoco \
@@ -66,18 +78,25 @@ cd ..
 
 ```bash
 git clone https://github.com/saprmarks/dictionary_learning.git
+git -C dictionary_learning checkout 60ec6bf5264944d64a4ca271f45a29ebfb9d4946
 pip install -e ./dictionary_learning
 ```
 
-Tested against commit `60ec6bf`. If upstream breaks, pin it:
-`(cd dictionary_learning && git checkout 60ec6bf)`.
+The full commit above is the tested dependency revision.
 
 **(c) AWE** — kinematic keyframe extraction (fork with packaging
 fixes; see the fork's NOTICE):
 
 ```bash
 git clone https://github.com/xc-j/awe.git
+git -C awe checkout 7197bb86a20784666dabed90e6eabcf8bb1e9912
 pip install -e ./awe
+```
+
+Return to the Event-SAE root before running the pipeline:
+
+```bash
+cd "$EVENT_SAE_ROOT"
 ```
 
 ## Usage
@@ -112,7 +131,7 @@ This creates a timestamped run directory. Export its name so later
 steps can derive their paths:
 
 ```bash
-export EVAL_RUN=EVAL-libero_spatial-openvla-<DATE_TIME>   # name of the dir under logs/openvla/
+export EVAL_RUN=EVAL-libero_spatial-openvla-DATE_TIME   # replace DATE_TIME
 ```
 
 Outputs under `logs/openvla/$EVAL_RUN/sae_activations/`:
@@ -131,7 +150,9 @@ python scripts/train_sae.py \
     --save-dir logs/openvla/sae/libero_spatial_layer31
 ```
 
-Output: `ae.pt` + `config.json` under
+The checked-in example uses the paper's OpenVLA settings
+(`lr=5e-5`, 4,000 steps, batch size 40,000). Output: `ae.pt` +
+`config.json` under
 `logs/openvla/sae/libero_spatial_layer31/trainer_0/`.
 
 Or skip step (b) and use the paper's four pre-trained SAEs (one per
@@ -142,14 +163,21 @@ output:
 
 ```bash
 # Pretrained, e.g. LIBERO-Spatial:
-SAE_CKPT=$(hf download mr-cabbage/event-sae-openvla-libero libero_spatial/ae.pt)
+OPENVLA_SAE_REV=d77aec094f2799e11b352630803601f9d2db5956
+OPENVLA_SAE_DIR="$EVENT_SAE_ROOT/external/checkpoints/openvla-$OPENVLA_SAE_REV"
+hf download mr-cabbage/event-sae-openvla-libero \
+    libero_spatial/ae.pt libero_spatial/config.json \
+    --revision "$OPENVLA_SAE_REV" \
+    --local-dir "$OPENVLA_SAE_DIR"
+SAE_CKPT="$OPENVLA_SAE_DIR/libero_spatial/ae.pt"
 
 # Or locally trained:
 SAE_CKPT=logs/openvla/sae/libero_spatial_layer31/trainer_0/ae.pt
 ```
 
-All subsequent commands in this doc reference `--sae-checkpoint
-$SAE_CKPT`.
+`ae.pt` and its sibling `config.json` are one checkpoint contract;
+download both from the same immutable revision. All subsequent
+commands in this doc reference `--sae-checkpoint $SAE_CKPT`.
 
 ## Phase 2 — Kinematic keyframe extraction
 
@@ -229,12 +257,14 @@ Send each cluster's representative 5-frame sequences to Gemini and
 parse a `{phrase, phase}` JSON response. `phase` is one of the six
 tags from the Phase 3 intro. Default model: `gemini-2.5-flash`
 (override with `--model`). The paper used a stronger Gemini model;
-this default keeps annotation cost low for reproduction. Cluster
-labels are descriptive only and do not affect feature ranking or
-the intervention results.
+this default keeps annotation cost low for reproduction. Parsed label
+strings are not numerical score inputs. Annotation validity is nevertheless
+an eligibility gate: missing, API-error, parse-error, or empty phrase/phase
+rows are excluded and can therefore change the ranking population and
+downstream intervention candidates.
 
 ```bash
-export GEMINI_API_KEY=<your-key>
+export GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 python scripts/annotate_clusters.py \
     --clusters-path logs/openvla/events/$EVAL_RUN/samples_5frames_stride2/clusters/clusters.jsonl
 ```
@@ -274,10 +304,14 @@ training run or the Hugging Face Hub).
 ### (i) Event-feature score matrix
 
 For each VLM-labeled cluster, score every SAE feature on how
-strongly its activation lines up with that cluster's events. The
-score is the max projection onto three temporal templates — pulse,
-step-up, step-down — inside a ±5-step window around each event,
-averaged across episodes. CPU-only.
+strongly its activation lines up with that cluster's events. Inside
+each `(cluster, episode)`, project every event window onto pulse,
+step-up, and step-down templates; average events separately for
+each template; then take the feature-wise maximum across those
+three template means. Finally, average the resulting vector equally
+across episodes in the cluster. This event-average → template-max →
+episode-average order matches Appendix D and prevents long episodes
+from receiving extra weight. CPU-only.
 
 ```bash
 python scripts/score_cluster_features.py \
@@ -289,9 +323,10 @@ python scripts/score_cluster_features.py \
     --output-path logs/openvla/scores/$EVAL_RUN/event_feature_scores.pt
 ```
 
-Output: one `.pt` payload — `(num_clusters, dict_size)` `matrix` plus
-`row_keys`, `row_results`, `templates`, `selection_counts`,
-`selected_events`, `source`.
+Output: one `.pt` payload with `(num_clusters, dict_size)`
+`matrix_raw`, `matrix_window_mean`, and `matrix_task_mean`, plus the
+compatibility alias `matrix`, `row_keys`, `row_results`, `templates`,
+`selection_counts`, `selected_events`, and `source`.
 
 ### (j) Build candidate feature lists
 
@@ -345,11 +380,15 @@ in `candidates.jsonl` — extract them with
 `jq -r '.feature_id' candidates.jsonl`. Requires GPU.
 
 ```bash
+FEATURE_ID=$(jq -r 'select(.ranking == "event_aligned") | .feature_id' \
+    "logs/openvla/rankings/$EVAL_RUN/candidates.jsonl" \
+    | head -n 1)
+
 python scripts/openvla/intervene.py \
     --config configs/examples/openvla/collect_libero_spatial.yaml \
-    --sae-checkpoint $SAE_CKPT \
+    --sae-checkpoint "$SAE_CKPT" \
     --layer-idx 31 \
-    --feature-id <FEATURE_ID> \
+    --feature-id "$FEATURE_ID" \
     --alpha 0.0
 ```
 
@@ -363,7 +402,10 @@ python scripts/openvla/collect_activations.py \
 
 For each ranking, take the mean of `SR_hook − SR_baseline` across
 its K features — this is how much zeroing that ranking's features
-hurts the policy.
+hurts the policy. Use the same task set, trials/task, seed, model
+checkpoint, and simulator settings for hook and no-hook runs, and
+retain both the task-level `events.csv` and `stdout.log` episode outcomes
+rather than only a copied aggregate table.
 
 Each intervention run also writes
 `intervene_feat<N>_alpha<A>_records.jsonl` (per-step feature
@@ -374,5 +416,5 @@ activation before / after the edit) for verifying the hook fired.
 `environment-openvla.lock.yml` is a pinned record of the conda + pip
 package versions on our working machine. It is **not a working
 installer** — editable external libraries are not included. Use it
-to cross-check versions when Step 1 / Step 2 produces a different
-env than expected.
+together with the explicit Step 2 commits and checkpoint revision to
+cross-check a recreated environment.
