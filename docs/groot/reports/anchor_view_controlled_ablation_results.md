@@ -10,7 +10,7 @@
 > 않았다. 전체 실행 이력은
 > [Annotation execution lineage](annotation_lineage.md#5-execution-lineage)에 있다.
 
-- 갱신일: 2026-07-25
+- 갱신일: 2026-07-27
 - Artifact 생성 시각: `2026-07-24T05:34:05Z`
 - 실행 root:
   `logs/groot_n15/experiments/anchor_view_controlled_ablation_v1/`
@@ -156,7 +156,7 @@ Manifest에 기록된 승인된 deviation은 다음과 같다.
 통합 결과 UI 실행 명령은
 [GR00T read-only commands](../README.md#7-read-only-commands)를 따른다.
 
-2026-07-24 최종 구현 검증:
+2026-07-27 현재 구현 검증:
 
 ```bash
 PYTHONPATH=. conda run --no-capture-output -n event-sae-dev \
@@ -165,7 +165,7 @@ PYTHONPATH=. conda run --no-capture-output -n event-sae-dev \
   tests/test_experiment_results_ui.py
 ```
 
-당시 결과는 `36 passed`였으며 현재 suite 전체 개수가 아닌 revision
+현재 두 UI test file은 `44 passed`이며 전체 suite 개수가 아닌 revision
 snapshot이다. 실제 artifact loader도 45 run, 15 phase set, 129 bundle
 phase rows를 strict validation으로 통과했다. 데스크톱과 320px viewport에서
 5-frame 재생, 이전/다음 rollout, source raw-cluster 이동, phase cell에서 정확한
@@ -173,9 +173,23 @@ ranking 행 이동, 키보드 탭과 45-cell matrix를 확인했다. 이 browser
 로컬 최종 확인이며 별도 test file로 저장하지 않았다.
 
 동일 서버의 `Oracle phase 실험` 탭은 별도 `/api/oracle` payload와 media
-endpoint를 사용한다. Simulator-oracle pilot과 이 45-run automatic annotation
-실험은 UI에서도 결합하지 않으며, 서로의 phase label이나 ranking을 대체 근거로
-사용하지 않는다.
+endpoint를 사용한다. `Oracle ↔ E3 정렬` 탭은 별도
+`/api/directional-alignment` payload에서 primary 10k/W5의 Fine·Coarse4
+Top-5를 비교한다. 이 비교는 source별 `matrix_raw` 순위를 유지하고 source
+score를 합치지 않는다. 방향 표기 `↑`·`↓`·`ᴾ`는 aggregate 대표 template이며
+rollout consistency나 causal effect가 아니다.
+
+최종 alignment 비교 수치는 다음과 같다.
+
+| Level | Fine | Coarse4 |
+| --- | --- | --- |
+| Instruction | 14 rows · ID 27 · same direction 9/27 | 13 rows · ID 28 · same direction 10/28 |
+| Task family | 3 rows · ID 7 · same direction 4/7 | 4 rows · ID 10 · same direction 5/10 |
+| Task agnostic | grasp 1 row · 3/3 | grasp 1 row · 3/3 |
+
+이 표는 최신 directional artifact의 descriptive view다. V11의 45-run
+historical snapshot을 대체하거나 automatic annotation의 semantic correctness를
+입증하지 않는다.
 
 ## 5. 남은 semantic gate
 

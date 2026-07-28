@@ -8,6 +8,10 @@ from event_sae.groot.oracle_results import (
     build_oracle_phase_results_dataset,
 )
 from event_sae.groot.phase_feature_results import RESULT_RANKINGS
+from event_sae.groot.phase_feature_results import (
+    DIRECTIONAL_ALIGNMENT_RELATIVE,
+    build_directional_alignment_dataset,
+)
 from event_sae.groot.results_browser import (
     build_experiment_results_service,
     build_experiment_results_dataset,
@@ -822,6 +826,186 @@ def test_results_application_loads_dedicated_read_only_ui(
         application.explorer("not-a-condition")
 
 
+def test_directional_alignment_builds_instruction_family_and_global_views(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    root = tmp_path / "experiment"
+    analysis_root = root / DIRECTIONAL_ALIGNMENT_RELATIVE
+    analysis_root.mkdir(parents=True)
+    (analysis_root / "summary.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "directional_phase_view_analysis_v1",
+                "claim_strength": "diagnostic_evidence",
+                "feature_identity_contract": {
+                    "same_checkpoint_sha256": True,
+                },
+                "held_claims": ["causal effect is not established"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    identities = [
+        (8, "Open the left drawer.", "left", "OpenDrawer"),
+        (7, "Open the right drawer.", "right", "OpenDrawer"),
+        (15, "Pick beer.", "beer", "PickPlaceCounterToCabinet"),
+        (5, "Pick bread.", "bread", "PickPlaceCounterToCabinet"),
+        (16, "Pick pizza cutter.", "pizza", "PickPlaceCounterToCabinet"),
+    ]
+    by_description = {}
+    by_task = {}
+    for task_id, description, cell_id, family in identities:
+        identity = {
+            "raw_task_id": task_id,
+            "instruction_id": f"instruction-{task_id}",
+            "cell_id": cell_id,
+            "task_family_id": family,
+            "task_family_label": family,
+            "task_identity_source": "fixture",
+        }
+        by_description[description] = identity
+        by_task[(task_id, description)] = identity
+    registry = {
+        "by_description": by_description,
+        "by_task": by_task,
+        "meta": {
+            "available": True,
+            "num_source_episodes": 150,
+            "num_instruction_cells": 5,
+            "num_task_families": 2,
+            "task_families": [
+                {
+                    "task_family_id": "OpenDrawer",
+                    "task_family_label": "Drawer",
+                    "cell_ids": ["left", "right"],
+                    "cell_count": 2,
+                },
+                {
+                    "task_family_id": "PickPlaceCounterToCabinet",
+                    "task_family_label": "PnP",
+                    "cell_ids": ["beer", "bread", "pizza"],
+                    "cell_count": 3,
+                },
+            ],
+        },
+    }
+
+    oracle_raw = torch.tensor(
+        [[8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0]] * 5
+    )
+    e3_raw = torch.tensor(
+        [[8.0, 7.0, 6.0, 2.0, 1.0, 5.0, 4.0, 3.0]] * 5
+    )
+
+    def write_score(
+        source: str,
+        view: str,
+        *,
+        raw: torch.Tensor,
+        e3: bool,
+    ) -> None:
+        row_keys = []
+        for task_id, description, _, family in identities:
+            phase = (
+                "grasp"
+                if view == "coarse4_exact_rescore"
+                or family == "PickPlaceCounterToCabinet"
+                else "grasp-handle"
+            )
+            row_keys.append(
+                {
+                    "cluster_id": f"{source}-{task_id}-{phase}",
+                    "task_description": description,
+                    "task_id": task_id,
+                    "phase": phase,
+                    "phrase": phase,
+                    "episode_coverage": 1.0,
+                }
+            )
+        pulse = torch.zeros_like(raw)
+        step_up = torch.zeros_like(raw)
+        step_down = torch.zeros_like(raw)
+        step_up[:, 0] = 3.0
+        step_down[:, 1] = 3.0
+        if e3:
+            step_up[:, 2] = 3.0
+        else:
+            pulse[:, 2] = 3.0
+        pulse[:, 3:] = 2.0
+        path = (
+            analysis_root
+            / "scores"
+            / source
+            / view
+            / "w5"
+            / "event_feature_scores.pt"
+        )
+        path.parent.mkdir(parents=True)
+        torch.save(
+            {
+                "window_size": 5,
+                "row_semantics": "fixture",
+                "score_definitions": {"matrix_raw": "fixture score"},
+                "row_keys": row_keys,
+                "row_results": [],
+                "selected_events": [],
+                "matrix_raw": raw,
+                "matrix_pulse": pulse,
+                "matrix_step_up": step_up,
+                "matrix_step_down": step_down,
+            },
+            path,
+        )
+
+    for view in ("fine_original", "coarse4_exact_rescore"):
+        write_score("oracle_full", view, raw=oracle_raw, e3=False)
+        write_score("v12_e3_cov0p3", view, raw=e3_raw, e3=True)
+
+    real_torch_load = torch.load
+    loaded_paths: list[Path] = []
+
+    def tracked_torch_load(path: Path, *args, **kwargs):
+        loaded_paths.append(Path(path))
+        return real_torch_load(path, *args, **kwargs)
+
+    monkeypatch.setattr(torch, "load", tracked_torch_load)
+    payload = build_directional_alignment_dataset(
+        experiment_root=root,
+        task_identity_registry=registry,
+    )
+
+    assert len(loaded_paths) == 4
+    assert len(set(loaded_paths)) == 4
+    assert payload["format"] == "event_sae_oracle_e3_alignment_v1"
+    assert payload["method"]["ranking"] == "matrix_raw"
+    assert payload["method"]["direction_is_rollout_consistency"] is False
+    assert [view["id"] for view in payload["views"]] == [
+        "fine_original",
+        "coarse4_exact_rescore",
+    ]
+    for view in payload["views"]:
+        levels = {level["id"]: level for level in view["levels"]}
+        assert levels["instruction"]["summary"] == {
+            "comparison_count": 5,
+            "id_overlap_count": 15,
+            "same_direction_overlap_count": 10,
+            "same_direction_fraction": 2 / 3,
+        }
+        assert levels["family"]["summary"]["comparison_count"] == 2
+        assert levels["task_agnostic"]["summary"]["comparison_count"] == 1
+        grasp = levels["task_agnostic"]["rows"][0]
+        assert grasp["phase"] == "grasp"
+        assert [item["feature_id"] for item in grasp["overlap"]] == [0, 1, 2]
+        assert [item["same_direction"] for item in grasp["overlap"]] == [
+            True,
+            True,
+            False,
+        ]
+
+
 def test_oracle_results_adapter_supports_partial_clustering_pilot(
     tmp_path: Path,
 ) -> None:
@@ -1280,6 +1464,12 @@ def test_results_ui_contains_experiment_explorer_controls() -> None:
         "stage4RepresentativeGrid",
         "stage4CompactGrid",
         "stage4AuditNotice",
+        "alignmentTab",
+        "alignmentPanel",
+        "alignmentCount",
+        "alignmentSummary",
+        "alignmentStatus",
+        "alignmentTable",
         "controlledHeatmapMode",
         "controlledHeatmapLimit",
         "controlledHeatmapTask",
@@ -1328,12 +1518,14 @@ def test_results_ui_contains_experiment_explorer_controls() -> None:
 
     assert 'fetch("/api/results")' in html
     assert 'fetch("/api/stage4-overview")' in html
+    assert 'fetch("/api/directional-alignment")' in html
     assert 'fetch("/api/oracle")' in html
     assert "/api/explorer?condition_id=" in html
     assert "/api/explorer/frame?" in html
     assert "/api/oracle/frame?" in html
     assert 'data-app-tab="clusters"' in html
     assert 'data-app-tab="features"' in html
+    assert 'data-app-tab="alignment"' in html
     assert 'data-app-tab="experiments"' in html
     assert 'data-app-tab="oracle"' in html
     assert "5개 condition." in html
@@ -1343,6 +1535,9 @@ def test_results_ui_contains_experiment_explorer_controls() -> None:
     assert "Phase feature 상세 보기 →" in html
     assert "보조 control과 해석 제한" in html
     assert "Action phase × Event-aligned feature" in html
+    assert "Oracle ↔ E3 feature alignment" in html
+    assert "Fine · 6-phase" in html
+    assert "Coarse · 4-phase" in html
     assert "Event aligned only" in html
     assert "instruction → task family → cross-family" in html
     assert "automatic AWE event anchor" in html

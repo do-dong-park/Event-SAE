@@ -48,6 +48,99 @@ PHASE_FEATURE_CANDIDATE_TOP_K = 20
 PHASE_FEATURE_TEMPORAL_SEMANTICS = "unknown-combined"
 
 
+DIRECTIONAL_ALIGNMENT_FORMAT = "event_sae_oracle_e3_alignment_v1"
+
+
+DIRECTIONAL_ALIGNMENT_RELATIVE = (
+    Path("analysis")
+    / "oracle_five_cell_vs_v12_e3_e4_10k_directional_w5_v1"
+)
+
+
+DIRECTIONAL_ALIGNMENT_SOURCES = {
+    "oracle": {
+        "artifact_id": "oracle_full",
+        "label": "Oracle",
+        "kind": "simulator_oracle",
+    },
+    "e3": {
+        "artifact_id": "v12_e3_cov0p3",
+        "label": "E3",
+        "kind": "automatic_event",
+    },
+}
+
+
+DIRECTIONAL_ALIGNMENT_VIEWS = {
+    "fine_original": {
+        "label": "Fine ontology",
+        "short_label": "6-phase",
+    },
+    "coarse4_exact_rescore": {
+        "label": "Coarse4 ontology",
+        "short_label": "4-phase",
+    },
+}
+
+
+_DIRECTIONAL_TEMPLATES = (
+    ("pulse", "matrix_pulse", "ᴾ"),
+    ("step_up", "matrix_step_up", "↑"),
+    ("step_down", "matrix_step_down", "↓"),
+)
+
+
+_CELL_PRESENTATION = {
+    "pq3_drawer_left": ("Left drawer", 0),
+    "pq3_drawer_right": ("Right drawer", 1),
+    "pq3_ppcc_beer": ("Beer", 2),
+    "pq3_ppcc_bread": ("Bread", 3),
+    "pq3_ppcc_pizza_cutter": ("Pizza cutter", 4),
+}
+
+
+_FAMILY_PRESENTATION = {
+    "OpenDrawer": ("Drawer", 0),
+    "PickPlaceCounterToCabinet": ("PnP", 1),
+}
+
+
+_PHASE_ORDER = {
+    "reach-to-handle": 0,
+    "reach-to-object": 0,
+    "reach": 0,
+    "grasp-handle": 1,
+    "grasp": 1,
+    "contact": 1,
+    "pull": 2,
+    "push-back": 2,
+    "transport": 2,
+    "place": 3,
+    "insert-settle": 4,
+    "terminal": 5,
+    "open-done": 5,
+    "disengage": 5,
+}
+
+
+_FINE_TO_CANONICAL_PHASE = {
+    "reach-to-handle": "reach",
+    "reach-to-object": "reach",
+    "reach": "reach",
+    "grasp-handle": "grasp",
+    "grasp": "grasp",
+    "contact": "grasp",
+    "pull": "transport",
+    "push-back": "transport",
+    "transport": "transport",
+    "place": "terminal",
+    "insert-settle": "terminal",
+    "terminal": "terminal",
+    "open-done": "terminal",
+    "disengage": "terminal",
+}
+
+
 def _slugify(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower() or "task"
 
@@ -347,6 +440,525 @@ def decorate_score_task_identities(
     return decorated
 
 
+def _load_directional_alignment_score(
+    *,
+    score_path: Path,
+    task_identity_registry: dict,
+) -> dict:
+    """Load matrix_raw plus its three directional template summaries."""
+
+    matrix_keys = tuple(
+        matrix_key for _, matrix_key, _ in _DIRECTIONAL_TEMPLATES
+    )
+    score_data = decorate_score_task_identities(
+        load_phase_feature_score_matrix(
+            score_path=score_path,
+            ranking="event_aligned",
+            additional_matrix_keys=matrix_keys,
+        ),
+        task_identity_registry,
+    )
+
+    return {
+        **score_data,
+        "directional": {
+            template: score_data["additional_matrices"][matrix_key]
+            for template, matrix_key, _ in _DIRECTIONAL_TEMPLATES
+        },
+    }
+
+
+def _directional_mean_vectors(
+    score_data: dict,
+    row_indices_by_cell: dict[str, list[int]],
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Average rows within cell first, then weight cells equally."""
+
+    if not row_indices_by_cell:
+        raise ValueError("Directional aggregation requires at least one cell")
+    raw_by_cell: list[np.ndarray] = []
+    template_by_cell: dict[str, list[np.ndarray]] = {
+        template: [] for template, _, _ in _DIRECTIONAL_TEMPLATES
+    }
+    for cell_id in sorted(row_indices_by_cell):
+        indices = row_indices_by_cell[cell_id]
+        if not indices:
+            raise ValueError("Directional cell aggregation is empty")
+        raw_by_cell.append(np.mean(score_data["matrix"][indices], axis=0))
+        for template in template_by_cell:
+            template_by_cell[template].append(
+                np.mean(score_data["directional"][template][indices], axis=0)
+            )
+    return (
+        np.mean(np.stack(raw_by_cell), axis=0),
+        {
+            template: np.mean(np.stack(values), axis=0)
+            for template, values in template_by_cell.items()
+        },
+    )
+
+
+def _directional_top_features(
+    *,
+    raw: np.ndarray,
+    directional: dict[str, np.ndarray],
+    top_k: int,
+) -> list[dict]:
+    """Rank by matrix_raw and attach the representative template direction."""
+
+    if raw.ndim != 1 or raw.size <= 0:
+        raise ValueError("Directional feature vector must be one-dimensional")
+    if not np.isfinite(raw).all():
+        raise ValueError("Directional feature vector contains non-finite values")
+    feature_ids = np.arange(raw.size, dtype=np.int64)
+    order = feature_ids[np.lexsort((feature_ids, -raw))][:top_k]
+    template_names = [item[0] for item in _DIRECTIONAL_TEMPLATES]
+    template_symbols = {
+        template: symbol for template, _, symbol in _DIRECTIONAL_TEMPLATES
+    }
+    template_values = np.stack(
+        [directional[template] for template in template_names],
+        axis=0,
+    )
+    if template_values.shape != (len(template_names), raw.size):
+        raise ValueError("Directional template vectors do not match matrix_raw")
+    direction_indices = np.argmax(template_values, axis=0)
+    return [
+        {
+            "rank": rank,
+            "feature_id": int(feature_id),
+            "score": float(raw[feature_id]),
+            "direction": template_names[int(direction_indices[feature_id])],
+            "direction_symbol": template_symbols[
+                template_names[int(direction_indices[feature_id])]
+            ],
+        }
+        for rank, feature_id in enumerate(order, start=1)
+    ]
+
+
+def _directional_overlap(
+    oracle_features: list[dict],
+    e3_features: list[dict],
+) -> list[dict]:
+    e3_by_id = {int(item["feature_id"]): item for item in e3_features}
+    overlap: list[dict] = []
+    for oracle in oracle_features:
+        e3 = e3_by_id.get(int(oracle["feature_id"]))
+        if e3 is None:
+            continue
+        overlap.append(
+            {
+                "feature_id": int(oracle["feature_id"]),
+                "oracle_rank": int(oracle["rank"]),
+                "e3_rank": int(e3["rank"]),
+                "oracle_direction": str(oracle["direction"]),
+                "e3_direction": str(e3["direction"]),
+                "oracle_direction_symbol": str(
+                    oracle["direction_symbol"]
+                ),
+                "e3_direction_symbol": str(e3["direction_symbol"]),
+                "same_direction": (
+                    oracle["direction"] == e3["direction"]
+                ),
+            }
+        )
+    return overlap
+
+
+def _directional_comparison_row(
+    *,
+    unit_id: str,
+    unit_label: str,
+    phase: str,
+    support_label: str,
+    oracle_vectors: tuple[np.ndarray, dict[str, np.ndarray]],
+    e3_vectors: tuple[np.ndarray, dict[str, np.ndarray]],
+    top_k: int,
+) -> dict:
+    oracle_features = _directional_top_features(
+        raw=oracle_vectors[0],
+        directional=oracle_vectors[1],
+        top_k=top_k,
+    )
+    e3_features = _directional_top_features(
+        raw=e3_vectors[0],
+        directional=e3_vectors[1],
+        top_k=top_k,
+    )
+    overlap = _directional_overlap(oracle_features, e3_features)
+    return {
+        "unit_id": unit_id,
+        "unit_label": unit_label,
+        "phase": phase,
+        "support_label": support_label,
+        "oracle_top_features": oracle_features,
+        "e3_top_features": e3_features,
+        "overlap": overlap,
+        "id_overlap_count": len(overlap),
+        "same_direction_overlap_count": sum(
+            bool(item["same_direction"]) for item in overlap
+        ),
+    }
+
+
+def _directional_level_summary(rows: list[dict]) -> dict:
+    id_overlap = sum(int(row["id_overlap_count"]) for row in rows)
+    same_direction = sum(
+        int(row["same_direction_overlap_count"]) for row in rows
+    )
+    return {
+        "comparison_count": len(rows),
+        "id_overlap_count": id_overlap,
+        "same_direction_overlap_count": same_direction,
+        "same_direction_fraction": (
+            float(same_direction / id_overlap) if id_overlap else None
+        ),
+    }
+
+
+def _directional_row_groups(
+    score_data: dict,
+    *,
+    canonicalize: bool,
+) -> dict[tuple[str, str, str], list[int]]:
+    groups: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+    for row_index, row in enumerate(score_data["row_keys"]):
+        cell_id = str(row.get("cell_id") or "")
+        family = str(row.get("task_family_id") or "")
+        phase = str(row["phase"])
+        if canonicalize:
+            phase = _FINE_TO_CANONICAL_PHASE.get(phase, phase)
+        if not cell_id or not family:
+            raise ValueError(
+                "Directional alignment requires canonical cell and family IDs"
+            )
+        groups[(family, cell_id, phase)].append(row_index)
+    return groups
+
+
+def _directional_instruction_rows(
+    source_scores: dict[str, dict],
+    *,
+    top_k: int,
+) -> list[dict]:
+    indexes: dict[str, dict[tuple[str, str], int]] = {}
+    for source, score_data in source_scores.items():
+        index: dict[tuple[str, str], int] = {}
+        for row_index, row in enumerate(score_data["row_keys"]):
+            key = (str(row["cell_id"]), str(row["phase"]))
+            if key in index:
+                raise ValueError(
+                    f"Directional score has duplicate instruction phase {key}"
+                )
+            index[key] = row_index
+        indexes[source] = index
+
+    common = set(indexes["oracle"]) & set(indexes["e3"])
+    rows: list[dict] = []
+    for cell_id, phase in sorted(
+        common,
+        key=lambda item: (
+            _CELL_PRESENTATION.get(item[0], (item[0], 99))[1],
+            _PHASE_ORDER.get(item[1], 99),
+            item[1],
+        ),
+    ):
+        unit_label = _CELL_PRESENTATION.get(
+            cell_id,
+            (cell_id, 99),
+        )[0]
+        source_vectors = {}
+        for source in ("oracle", "e3"):
+            row_index = indexes[source][(cell_id, phase)]
+            source_vectors[source] = _directional_mean_vectors(
+                source_scores[source],
+                {cell_id: [row_index]},
+            )
+        rows.append(
+            _directional_comparison_row(
+                unit_id=cell_id,
+                unit_label=unit_label,
+                phase=phase,
+                support_label="1 instruction cell",
+                oracle_vectors=source_vectors["oracle"],
+                e3_vectors=source_vectors["e3"],
+                top_k=top_k,
+            )
+        )
+    return rows
+
+
+def _directional_family_rows(
+    source_scores: dict[str, dict],
+    *,
+    family_cells: dict[str, set[str]],
+    top_k: int,
+) -> list[dict]:
+    grouped = {
+        source: _directional_row_groups(score_data, canonicalize=False)
+        for source, score_data in source_scores.items()
+    }
+    rows: list[dict] = []
+    for family, expected_cells in sorted(
+        family_cells.items(),
+        key=lambda item: _FAMILY_PRESENTATION.get(
+            item[0], (item[0], 99)
+        )[1],
+    ):
+        phase_sets: list[set[str]] = []
+        for source in ("oracle", "e3"):
+            phases = {
+                phase
+                for source_family, _, phase in grouped[source]
+                if source_family == family
+            }
+            complete = {
+                phase
+                for phase in phases
+                if {
+                    cell_id
+                    for source_family, cell_id, source_phase in grouped[source]
+                    if source_family == family and source_phase == phase
+                }
+                == expected_cells
+            }
+            phase_sets.append(complete)
+        for phase in sorted(
+            set.intersection(*phase_sets),
+            key=lambda value: (_PHASE_ORDER.get(value, 99), value),
+        ):
+            source_vectors = {}
+            for source in ("oracle", "e3"):
+                by_cell = {
+                    cell_id: grouped[source][(family, cell_id, phase)]
+                    for cell_id in expected_cells
+                }
+                source_vectors[source] = _directional_mean_vectors(
+                    source_scores[source],
+                    by_cell,
+                )
+            rows.append(
+                _directional_comparison_row(
+                    unit_id=family,
+                    unit_label=_FAMILY_PRESENTATION.get(
+                        family, (family, 99)
+                    )[0],
+                    phase=phase,
+                    support_label=f"{len(expected_cells)} instruction cells",
+                    oracle_vectors=source_vectors["oracle"],
+                    e3_vectors=source_vectors["e3"],
+                    top_k=top_k,
+                )
+            )
+    return rows
+
+
+def _directional_task_agnostic_rows(
+    source_scores: dict[str, dict],
+    *,
+    all_cells: set[str],
+    top_k: int,
+) -> list[dict]:
+    grouped = {
+        source: _directional_row_groups(score_data, canonicalize=True)
+        for source, score_data in source_scores.items()
+    }
+    phase_sets: list[set[str]] = []
+    for source in ("oracle", "e3"):
+        phases = {phase for _, _, phase in grouped[source]}
+        complete = {
+            phase
+            for phase in phases
+            if {
+                cell_id
+                for _, cell_id, source_phase in grouped[source]
+                if source_phase == phase
+            }
+            == all_cells
+        }
+        phase_sets.append(complete)
+
+    rows: list[dict] = []
+    for phase in sorted(
+        set.intersection(*phase_sets),
+        key=lambda value: (_PHASE_ORDER.get(value, 99), value),
+    ):
+        source_vectors = {}
+        for source in ("oracle", "e3"):
+            by_cell: dict[str, list[int]] = {}
+            for cell_id in all_cells:
+                indices = [
+                    row_index
+                    for (family, grouped_cell, grouped_phase), group_indices
+                    in grouped[source].items()
+                    if grouped_cell == cell_id and grouped_phase == phase
+                    for row_index in group_indices
+                ]
+                if not indices:
+                    raise ValueError(
+                        f"Task-agnostic phase {phase} is missing {cell_id}"
+                    )
+                by_cell[cell_id] = indices
+            source_vectors[source] = _directional_mean_vectors(
+                source_scores[source],
+                by_cell,
+            )
+        rows.append(
+            _directional_comparison_row(
+                unit_id="all_five_cells",
+                unit_label="All 5 cells",
+                phase=phase,
+                support_label=f"{len(all_cells)} instruction cells",
+                oracle_vectors=source_vectors["oracle"],
+                e3_vectors=source_vectors["e3"],
+                top_k=top_k,
+            )
+        )
+    return rows
+
+
+def build_directional_alignment_dataset(
+    *,
+    experiment_root: Path,
+    task_identity_registry: dict | None = None,
+    analysis_relative: Path = DIRECTIONAL_ALIGNMENT_RELATIVE,
+    top_k: int = 5,
+) -> dict:
+    """Build the final Oracle↔E3 Fine/Coarse directional comparison payload."""
+
+    if top_k <= 0:
+        raise ValueError("Directional alignment top_k must be positive")
+    root = resolve_groot_artifact_path(experiment_root).resolve()
+    analysis_relative = Path(analysis_relative)
+    if analysis_relative.is_absolute() or ".." in analysis_relative.parts:
+        raise ValueError("Directional analysis path must stay under experiment root")
+    analysis_root = root / analysis_relative
+    summary_path = analysis_root / "summary.json"
+    if not summary_path.is_file():
+        raise FileNotFoundError(
+            f"Directional analysis summary not found: {summary_path}"
+        )
+    analysis_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    if analysis_summary.get("schema_version") != (
+        "directional_phase_view_analysis_v1"
+    ):
+        raise ValueError("Directional analysis summary schema is unsupported")
+
+    registry = (
+        task_identity_registry
+        if task_identity_registry is not None
+        else load_controlled_task_identity_registry(root)
+    )
+    identity_meta = registry.get("meta") or {}
+    if not identity_meta.get("available"):
+        raise ValueError(
+            "Directional alignment requires the controlled task identity registry"
+        )
+    family_cells = {
+        str(item["task_family_id"]): {
+            str(cell_id) for cell_id in item["cell_ids"]
+        }
+        for item in identity_meta.get("task_families", [])
+    }
+    all_cells = {
+        cell_id for cells in family_cells.values() for cell_id in cells
+    }
+
+    views: list[dict] = []
+    for view_id, view_meta in DIRECTIONAL_ALIGNMENT_VIEWS.items():
+        source_scores = {}
+        for source, source_meta in DIRECTIONAL_ALIGNMENT_SOURCES.items():
+            score_path = (
+                analysis_root
+                / "scores"
+                / str(source_meta["artifact_id"])
+                / view_id
+                / "w5"
+                / "event_feature_scores.pt"
+            )
+            source_scores[source] = _load_directional_alignment_score(
+                score_path=score_path,
+                task_identity_registry=registry,
+            )
+        levels = {
+            "instruction": _directional_instruction_rows(
+                source_scores,
+                top_k=top_k,
+            ),
+            "family": _directional_family_rows(
+                source_scores,
+                family_cells=family_cells,
+                top_k=top_k,
+            ),
+            "task_agnostic": _directional_task_agnostic_rows(
+                source_scores,
+                all_cells=all_cells,
+                top_k=top_k,
+            ),
+        }
+        views.append(
+            {
+                "id": view_id,
+                **view_meta,
+                "levels": [
+                    {
+                        "id": level_id,
+                        "label": {
+                            "instruction": "Instruction Cell",
+                            "family": "Task Family",
+                            "task_agnostic": "Task Agnostic",
+                        }[level_id],
+                        "rows": rows,
+                        "summary": _directional_level_summary(rows),
+                    }
+                    for level_id, rows in levels.items()
+                ],
+            }
+        )
+
+    return {
+        "format": DIRECTIONAL_ALIGNMENT_FORMAT,
+        "analysis_id": analysis_root.name,
+        "claim_strength": str(
+            analysis_summary.get("claim_strength") or "diagnostic_evidence"
+        ),
+        "sources": [
+            {"id": source, **metadata}
+            for source, metadata in DIRECTIONAL_ALIGNMENT_SOURCES.items()
+        ],
+        "views": views,
+        "method": {
+            "checkpoint": "SAE 10k · batch 4096",
+            "coverage": 0.3,
+            "window": 5,
+            "top_k": top_k,
+            "ranking": "matrix_raw",
+            "direction": (
+                "argmax(matrix_pulse, matrix_step_up, matrix_step_down)"
+            ),
+            "direction_is_rollout_consistency": False,
+            "source_score_pooling": False,
+            "cell_aggregation": "equal_weight_after_within_cell_mean",
+        },
+        "legend": [
+            {"id": "step_up", "symbol": "↑", "label": "step-up"},
+            {"id": "step_down", "symbol": "↓", "label": "step-down"},
+            {"id": "pulse", "symbol": "ᴾ", "label": "pulse"},
+        ],
+        "audit": {
+            "feature_identity": (
+                analysis_summary.get("feature_identity_contract") or {}
+            ),
+            "held_claims": list(analysis_summary.get("held_claims") or []),
+            "interpretation": (
+                "Direction is an aggregate representative template, not "
+                "rollout-level consistency or causal evidence."
+            ),
+        },
+    }
+
+
 def _event_aligned_evidence_ladder(
     *,
     row_index: int,
@@ -527,6 +1139,7 @@ def load_phase_feature_score_matrix(
     *,
     score_path: Path,
     ranking: str,
+    additional_matrix_keys: tuple[str, ...] = (),
 ) -> dict:
     """Load one full score matrix using the checkpoint's audited row order."""
 
@@ -565,6 +1178,33 @@ def load_phase_feature_score_matrix(
     )
     if not np.isfinite(matrix).all():
         raise ValueError("Feature score matrix contains a non-finite value")
+    if len(set(additional_matrix_keys)) != len(additional_matrix_keys):
+        raise ValueError("Additional feature score matrix keys must be unique")
+    additional_matrices: dict[str, np.ndarray] = {}
+    for additional_key in additional_matrix_keys:
+        if additional_key == matrix_key:
+            raise ValueError(
+                "Additional feature score matrix duplicates the primary matrix"
+            )
+        additional_value = artifact.get(additional_key)
+        if (
+            not torch.is_tensor(additional_value)
+            or tuple(additional_value.shape) != tuple(matrix_value.shape)
+        ):
+            raise ValueError(
+                f"Feature score artifact has invalid {additional_key}"
+            )
+        additional_matrix = (
+            additional_value.detach()
+            .to(dtype=torch.float64, device="cpu")
+            .numpy()
+        )
+        if not np.isfinite(additional_matrix).all():
+            raise ValueError(
+                f"Feature score matrix {additional_key} contains "
+                "a non-finite value"
+            )
+        additional_matrices[additional_key] = additional_matrix
 
     raw_row_keys = artifact.get("row_keys")
     if (
@@ -682,6 +1322,7 @@ def load_phase_feature_score_matrix(
         "ranking": ranking,
         "matrix_key": matrix_key,
         "matrix": matrix,
+        "additional_matrices": additional_matrices,
         "row_keys": row_keys,
         "row_results_by_identity": row_results_by_identity,
         "window_size": (

@@ -27,6 +27,7 @@ from event_sae.groot.oracle_results import (
 )
 from event_sae.groot.phase_feature_results import (
     RESULT_RANKINGS,
+    build_directional_alignment_dataset,
     build_phase_feature_heatmap,
     build_phase_feature_overview,
     compact_ranking_row,
@@ -876,6 +877,8 @@ class ExperimentResultsService:
         )
         self._phase_feature_overview_lock = threading.Lock()
         self._phase_feature_overview_payload: dict | None = None
+        self._directional_alignment_lock = threading.Lock()
+        self._directional_alignment_payload: dict | None = None
         self.oracle_experiment_root = (
             Path(oracle_experiment_root).expanduser().resolve()
             if oracle_experiment_root is not None
@@ -902,6 +905,19 @@ class ExperimentResultsService:
                     task_identity_registry=self._task_identity_registry,
                 )
             return self._phase_feature_overview_payload
+
+    def directional_alignment(self) -> dict:
+        """Return the cached final Oracle↔E3 directional comparison."""
+
+        with self._directional_alignment_lock:
+            if self._directional_alignment_payload is None:
+                self._directional_alignment_payload = (
+                    build_directional_alignment_dataset(
+                        experiment_root=self.experiment_root,
+                        task_identity_registry=self._task_identity_registry,
+                    )
+                )
+            return self._directional_alignment_payload
 
     def _cached_heatmap_score_data(
         self,
@@ -1208,6 +1224,21 @@ def make_experiment_results_http_handler(
                 ):
                     self._send_json(
                         {"error": "Could not build Stage 4 overview"},
+                        status=HTTPStatus.UNPROCESSABLE_ENTITY,
+                    )
+                return
+            if path == "/api/directional-alignment":
+                try:
+                    self._send_json(application.directional_alignment())
+                except (
+                    FileNotFoundError,
+                    ValueError,
+                    json.JSONDecodeError,
+                    OSError,
+                    RuntimeError,
+                ):
+                    self._send_json(
+                        {"error": "Could not build directional alignment"},
                         status=HTTPStatus.UNPROCESSABLE_ENTITY,
                     )
                 return

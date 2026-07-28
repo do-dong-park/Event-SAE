@@ -1033,6 +1033,303 @@
       .stage4-family-row span { grid-column: 1 / -1; }
     }
 
+    .alignment-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: end;
+      padding: 24px;
+      border: 1px solid rgba(101, 222, 196, .22);
+      border-radius: var(--radius);
+      background:
+        radial-gradient(circle at 0 0, rgba(101, 222, 196, .11), transparent 34%),
+        radial-gradient(circle at 100% 0, rgba(125, 174, 255, .09), transparent 36%),
+        var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .alignment-hero h2 {
+      margin: 5px 0 8px;
+      font-size: clamp(24px, 3.5vw, 38px);
+      letter-spacing: -.045em;
+    }
+    .alignment-hero p:not(.hero-kicker) {
+      max-width: 760px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.65;
+    }
+    .alignment-contract {
+      display: grid;
+      grid-template-columns: repeat(3, auto);
+      gap: 7px;
+    }
+    .alignment-contract span {
+      min-width: 86px;
+      padding: 11px 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      color: var(--faint);
+      background: rgba(8, 13, 18, .48);
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: .05em;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    .alignment-contract b {
+      display: block;
+      margin-top: 3px;
+      color: #e4ebef;
+      font-size: 12px;
+      letter-spacing: normal;
+      text-transform: none;
+    }
+    .alignment-section { margin-top: 22px; }
+    .alignment-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line-soft);
+      background: rgba(8, 13, 18, .34);
+    }
+    .alignment-switches {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .alignment-switch-group {
+      display: flex;
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: rgba(0, 0, 0, .16);
+    }
+    .alignment-switch {
+      min-height: 32px;
+      padding: 0 11px;
+      border: 0;
+      border-radius: 6px;
+      color: var(--faint);
+      background: transparent;
+      font-size: 9px;
+      font-weight: 800;
+    }
+    .alignment-switch:hover,
+    .alignment-switch:focus-visible {
+      color: #dfe9ee;
+      outline: none;
+      background: rgba(255, 255, 255, .035);
+    }
+    .alignment-switch.active {
+      color: #06100e;
+      background: var(--mint);
+      box-shadow: 0 5px 18px rgba(101, 222, 196, .15);
+    }
+    .alignment-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      color: var(--faint);
+      font-size: 9px;
+    }
+    .alignment-legend span {
+      display: inline-flex;
+      min-height: 28px;
+      align-items: center;
+      gap: 5px;
+      padding: 0 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .018);
+    }
+    .alignment-legend b {
+      color: var(--blue);
+      font-size: 12px;
+    }
+    .alignment-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      padding: 16px 20px;
+    }
+    .alignment-summary-card {
+      padding: 13px 14px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: rgba(8, 13, 18, .42);
+    }
+    .alignment-summary-card span {
+      display: block;
+      color: var(--faint);
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .alignment-summary-card b {
+      display: block;
+      margin-top: 5px;
+      color: #e5edf1;
+      font-size: 20px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -.035em;
+    }
+    .alignment-summary-card.accent b { color: var(--mint); }
+    .alignment-status {
+      margin: 0 20px 14px;
+      padding: 10px 12px;
+      border: 1px solid rgba(125, 174, 255, .15);
+      border-radius: 8px;
+      color: var(--muted);
+      background: rgba(125, 174, 255, .035);
+      font-size: 9px;
+      line-height: 1.55;
+    }
+    .alignment-table-scroll {
+      overflow-x: auto;
+      border-top: 1px solid var(--line-soft);
+    }
+    .alignment-table {
+      width: 100%;
+      min-width: 1040px;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .alignment-table th {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--faint);
+      background: rgba(8, 13, 18, .88);
+      font-size: 8px;
+      font-weight: 850;
+      letter-spacing: .06em;
+      text-align: left;
+      text-transform: uppercase;
+    }
+    .alignment-table th:nth-child(1) { width: 12%; }
+    .alignment-table th:nth-child(2) { width: 12%; }
+    .alignment-table th:nth-child(3),
+    .alignment-table th:nth-child(4) { width: 27%; }
+    .alignment-table th:nth-child(5) { width: 22%; }
+    .alignment-table td {
+      padding: 13px 12px;
+      border-bottom: 1px solid var(--line-soft);
+      vertical-align: top;
+    }
+    .alignment-table tbody tr:hover {
+      background: rgba(125, 174, 255, .025);
+    }
+    .alignment-unit b,
+    .alignment-phase b {
+      display: block;
+      color: #dce6eb;
+      font-size: 10px;
+      line-height: 1.35;
+    }
+    .alignment-unit span,
+    .alignment-phase span {
+      display: block;
+      margin-top: 4px;
+      color: var(--faint);
+      font-size: 8px;
+      line-height: 1.4;
+    }
+    .alignment-phase b { color: var(--mint); }
+    .alignment-features {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .alignment-feature {
+      display: inline-flex;
+      min-height: 26px;
+      align-items: center;
+      gap: 3px;
+      padding: 0 7px;
+      border: 1px solid var(--line-soft);
+      border-radius: 7px;
+      color: #cad5da;
+      background: rgba(255, 255, 255, .018);
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+    .alignment-feature .rank {
+      color: var(--faint);
+      font-family: inherit;
+      font-size: 7px;
+    }
+    .alignment-feature .direction {
+      color: var(--blue);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .alignment-overlap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .alignment-match {
+      display: inline-flex;
+      min-height: 27px;
+      align-items: center;
+      gap: 5px;
+      padding: 0 8px;
+      border: 1px solid rgba(255, 177, 90, .2);
+      border-radius: 7px;
+      color: var(--orange);
+      background: rgba(255, 177, 90, .035);
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+    .alignment-match.exact {
+      border-color: rgba(101, 222, 196, .25);
+      color: var(--mint);
+      background: rgba(101, 222, 196, .055);
+      font-weight: 850;
+    }
+    .alignment-empty {
+      color: var(--faint);
+      font-size: 9px;
+    }
+    .alignment-caveat {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+      margin: 16px 20px 20px;
+      padding: 12px 13px;
+      border: 1px solid rgba(255, 177, 90, .16);
+      border-radius: 9px;
+      color: var(--muted);
+      background: rgba(255, 177, 90, .035);
+      font-size: 9px;
+      line-height: 1.55;
+    }
+    .alignment-caveat b { color: var(--orange); }
+    @media (max-width: 900px) {
+      .alignment-hero { grid-template-columns: 1fr; }
+      .alignment-contract { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .alignment-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 560px) {
+      .alignment-contract,
+      .alignment-summary { grid-template-columns: 1fr; }
+      .alignment-toolbar { padding: 12px; }
+      .alignment-switches,
+      .alignment-switch-group { width: 100%; }
+      .alignment-switch { flex: 1; }
+      .alignment-status,
+      .alignment-caveat { margin-left: 12px; margin-right: 12px; }
+    }
+
     .phase-matrix-body { padding: 16px 18px 20px; }
     .phase-verification-status {
       display: flex;
@@ -3617,6 +3914,16 @@
         2 · Phase feature 확인
       </button>
       <button
+        id="alignmentTab"
+        type="button"
+        class="app-tab"
+        role="tab"
+        aria-controls="alignmentPanel"
+        data-app-tab="alignment"
+      >
+        3 · Oracle ↔ E3 정렬
+      </button>
+      <button
         id="experimentTab"
         type="button"
         class="app-tab"
@@ -4065,6 +4372,117 @@
     </div>
 
     <div
+      id="alignmentPanel"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="alignmentTab"
+      data-tab-panel="alignment"
+      hidden
+    >
+      <section class="alignment-hero">
+        <div>
+          <p class="hero-kicker">최종 분석 · 같은 SAE 좌표계</p>
+          <h2>Oracle ↔ E3 feature alignment</h2>
+          <p>
+            같은 semantic phase로 분류된 Oracle과 E3 event에서 Event-aligned
+            Top-5 feature ID와 대표 activation 방향을 직접 비교합니다.
+            Feature 순위는 matrix_raw, 방향은 pulse·step-up·step-down 중 최대값입니다.
+          </p>
+        </div>
+        <div class="alignment-contract" aria-label="정렬 분석 고정 조건">
+          <span>Checkpoint<b>SAE 10k</b></span>
+          <span>E3 coverage<b>≥ 0.3</b></span>
+          <span>Window<b>W5</b></span>
+        </div>
+      </section>
+
+      <section class="section alignment-section">
+        <div class="section-head">
+          <div>
+            <h3>Semantic phase별 Top-5 비교</h3>
+            <p>
+              Fine/Coarse ontology와 집계 수준을 바꾸며 동일 Feature ID와
+              activation 방향이 어디까지 유지되는지 확인합니다.
+            </p>
+          </div>
+          <div id="alignmentCount" class="section-count">불러오는 중…</div>
+        </div>
+        <div class="alignment-toolbar">
+          <div class="alignment-switches">
+            <div
+              id="alignmentViewSwitch"
+              class="alignment-switch-group"
+              role="tablist"
+              aria-label="Phase ontology"
+            >
+              <button
+                type="button"
+                class="alignment-switch active"
+                role="tab"
+                data-alignment-view="fine_original"
+              >Fine · 6-phase</button>
+              <button
+                type="button"
+                class="alignment-switch"
+                role="tab"
+                data-alignment-view="coarse4_exact_rescore"
+              >Coarse · 4-phase</button>
+            </div>
+            <div
+              id="alignmentLevelSwitch"
+              class="alignment-switch-group"
+              role="tablist"
+              aria-label="정렬 집계 수준"
+            >
+              <button
+                type="button"
+                class="alignment-switch active"
+                role="tab"
+                data-alignment-level="instruction"
+              >Instruction</button>
+              <button
+                type="button"
+                class="alignment-switch"
+                role="tab"
+                data-alignment-level="family"
+              >Task family</button>
+              <button
+                type="button"
+                class="alignment-switch"
+                role="tab"
+                data-alignment-level="task_agnostic"
+              >Task agnostic</button>
+            </div>
+          </div>
+          <div id="alignmentLegend" class="alignment-legend">
+            <span><b>↑</b> step-up</span>
+            <span><b>↓</b> step-down</span>
+            <span><b>ᴾ</b> pulse</span>
+          </div>
+        </div>
+        <div id="alignmentSummary" class="alignment-summary"></div>
+        <div
+          id="alignmentStatus"
+          class="alignment-status"
+          role="status"
+          aria-live="polite"
+        >
+          최신 directional artifact를 읽는 중입니다.
+        </div>
+        <div class="alignment-table-scroll" tabindex="0">
+          <table id="alignmentTable" class="alignment-table"></table>
+        </div>
+        <div class="alignment-caveat">
+          <b>판정 범위</b>
+          <span>
+            굵은 초록 표기는 Feature ID와 대표 방향이 모두 일치한 경우입니다.
+            방향은 rollout consistency나 causal effect가 아니라 집계된 대표 template입니다.
+          </span>
+        </div>
+      </section>
+    </div>
+
+    <div
       id="experimentPanel"
       class="tab-panel"
       role="tabpanel"
@@ -4476,6 +4894,10 @@
       data: null,
       stage4Overview: null,
       stage4OverviewLoading: false,
+      alignmentData: null,
+      alignmentLoading: false,
+      alignmentView: "fine_original",
+      alignmentLevel: "instruction",
       pendingHeatmapFocus: null,
       condition: "all",
       coverage: "all",
@@ -4856,13 +5278,16 @@
       });
       const clusterMode = tab === "clusters";
       const featureMode = tab === "features";
+      const alignmentMode = tab === "alignment";
       const oracleMode = tab === "oracle";
-      $("experimentFilters").hidden = oracleMode;
+      $("experimentFilters").hidden = oracleMode || alignmentMode;
       $("experimentFilters").classList.toggle("feature-mode", featureMode);
-      $("validationFlow").hidden = tab === "experiments" || oracleMode;
-      $("checkpointFilterField").hidden = clusterMode || oracleMode;
+      $("validationFlow").hidden =
+        tab === "experiments" || oracleMode || alignmentMode;
+      $("checkpointFilterField").hidden =
+        clusterMode || oracleMode || alignmentMode;
       $("rankingFilterField").hidden =
-        clusterMode || featureMode || oracleMode;
+        clusterMode || featureMode || oracleMode || alignmentMode;
       if (clusterMode || featureMode) {
         if (state.condition === "all") {
           state.condition = state.data.facets.conditions[0].id;
@@ -4890,6 +5315,10 @@
       if (oracleMode) {
         stopExplorerPlayback();
         loadOracleResults();
+      } else if (alignmentMode) {
+        stopOraclePlayback();
+        stopExplorerPlayback();
+        loadDirectionalAlignment();
       } else if (clusterMode) {
         stopOraclePlayback();
         loadClusterExplorer();
@@ -5520,6 +5949,234 @@
         $("stage4OverviewCount").textContent = "overview unavailable";
       } finally {
         state.stage4OverviewLoading = false;
+      }
+    }
+
+    function selectedAlignmentView() {
+      return (state.alignmentData?.views || []).find(
+        (view) => view.id === state.alignmentView
+      ) || null;
+    }
+
+    function selectedAlignmentLevel() {
+      return (selectedAlignmentView()?.levels || []).find(
+        (level) => level.id === state.alignmentLevel
+      ) || null;
+    }
+
+    function appendAlignmentSummary(container, label, value, accent = false) {
+      const card = element(
+        "div",
+        `alignment-summary-card${accent ? " accent" : ""}`
+      );
+      card.appendChild(element("span", "", label));
+      card.appendChild(element("b", "", String(value)));
+      container.appendChild(card);
+    }
+
+    function appendAlignmentFeatures(container, features) {
+      if (!(features || []).length) {
+        container.appendChild(element("span", "alignment-empty", "—"));
+        return;
+      }
+      features.forEach((feature) => {
+        const chip = element("span", "alignment-feature");
+        chip.title =
+          `matrix_raw ${Number(feature.score).toFixed(3)} · `
+          + String(feature.direction).replace("_", "-");
+        chip.appendChild(element("span", "rank", String(feature.rank)));
+        chip.appendChild(
+          document.createTextNode("F" + String(feature.feature_id))
+        );
+        chip.appendChild(
+          element("span", "direction", feature.direction_symbol)
+        );
+        container.appendChild(chip);
+      });
+    }
+
+    function appendAlignmentOverlap(container, overlap) {
+      if (!(overlap || []).length) {
+        container.appendChild(
+          element("span", "alignment-empty", "Top-5 교집합 없음")
+        );
+        return;
+      }
+      overlap.forEach((item) => {
+        const chip = element(
+          "span",
+          `alignment-match${item.same_direction ? " exact" : ""}`,
+          "F" + String(item.feature_id) + " "
+          + item.oracle_direction_symbol + "/"
+          + item.e3_direction_symbol
+        );
+        chip.title = item.same_direction
+          ? "Feature ID와 대표 방향 모두 일치"
+          : "Feature ID는 같지만 대표 방향은 다름";
+        container.appendChild(chip);
+      });
+    }
+
+    function renderDirectionalAlignment() {
+      const data = state.alignmentData;
+      if (!data) return;
+      document.querySelectorAll("[data-alignment-view]").forEach((button) => {
+        const active = button.dataset.alignmentView === state.alignmentView;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+        button.tabIndex = active ? 0 : -1;
+      });
+      document.querySelectorAll("[data-alignment-level]").forEach((button) => {
+        const active = button.dataset.alignmentLevel === state.alignmentLevel;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+        button.tabIndex = active ? 0 : -1;
+      });
+
+      const view = selectedAlignmentView();
+      const level = selectedAlignmentLevel();
+      if (!view || !level) {
+        $("alignmentStatus").textContent =
+          "선택한 alignment view를 찾지 못했습니다.";
+        $("alignmentCount").textContent = "unavailable";
+        $("alignmentSummary").replaceChildren();
+        $("alignmentTable").replaceChildren();
+        return;
+      }
+
+      const summary = level.summary || {};
+      const comparisonCount = Number(summary.comparison_count || 0);
+      const idOverlap = Number(summary.id_overlap_count || 0);
+      const sameDirection = Number(
+        summary.same_direction_overlap_count || 0
+      );
+      const exactPercent = idOverlap
+        ? Math.round(100 * sameDirection / idOverlap)
+        : 0;
+      $("alignmentCount").textContent =
+        `${comparisonCount} comparable rows`;
+      const summaryGrid = $("alignmentSummary");
+      summaryGrid.replaceChildren();
+      appendAlignmentSummary(
+        summaryGrid,
+        "Comparable units",
+        comparisonCount
+      );
+      appendAlignmentSummary(summaryGrid, "Top-5 ID overlap", idOverlap);
+      appendAlignmentSummary(
+        summaryGrid,
+        "Same-direction overlap",
+        `${sameDirection}/${idOverlap}`,
+        true
+      );
+      appendAlignmentSummary(
+        summaryGrid,
+        "Direction agreement",
+        `${exactPercent}%`
+      );
+      $("alignmentStatus").textContent =
+        `${view.label} · ${level.label}. `
+        + `Oracle–E3 공통 Top-5 ${idOverlap}건 중 `
+        + `${sameDirection}건은 대표 방향까지 일치합니다.`;
+
+      const table = $("alignmentTable");
+      table.replaceChildren();
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      [
+        level.id === "instruction"
+          ? "Instruction"
+          : level.id === "family"
+          ? "Task family"
+          : "Scope",
+        "Phase",
+        "Oracle Event-aligned Top-5",
+        "E3 Event-aligned Top-5",
+        "ID overlap (Oracle/E3)",
+      ].forEach((label) => {
+        headRow.appendChild(element("th", "", label));
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      (level.rows || []).forEach((row) => {
+        const tr = document.createElement("tr");
+        const unit = element("td", "alignment-unit");
+        unit.appendChild(element("b", "", row.unit_label));
+        unit.appendChild(element("span", "", row.support_label));
+        tr.appendChild(unit);
+        const phase = element("td", "alignment-phase");
+        phase.appendChild(element("b", "", row.phase));
+        phase.appendChild(
+          element(
+            "span",
+            "",
+            `${row.id_overlap_count} ID · `
+            + `${row.same_direction_overlap_count} exact`
+          )
+        );
+        tr.appendChild(phase);
+        const oracle = element("td");
+        const oracleFeatures = element("div", "alignment-features");
+        appendAlignmentFeatures(
+          oracleFeatures,
+          row.oracle_top_features
+        );
+        oracle.appendChild(oracleFeatures);
+        tr.appendChild(oracle);
+        const e3 = element("td");
+        const e3Features = element("div", "alignment-features");
+        appendAlignmentFeatures(e3Features, row.e3_top_features);
+        e3.appendChild(e3Features);
+        tr.appendChild(e3);
+        const overlap = element("td");
+        const overlapList = element("div", "alignment-overlap");
+        appendAlignmentOverlap(overlapList, row.overlap);
+        overlap.appendChild(overlapList);
+        tr.appendChild(overlap);
+        tbody.appendChild(tr);
+      });
+      if (!(level.rows || []).length) {
+        const emptyRow = document.createElement("tr");
+        const emptyCell = element(
+          "td",
+          "alignment-empty",
+          "이 수준에서 Oracle과 E3가 공통으로 갖는 phase가 없습니다."
+        );
+        emptyCell.colSpan = 5;
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+      }
+      table.appendChild(tbody);
+    }
+
+    async function loadDirectionalAlignment() {
+      if (state.alignmentData) {
+        renderDirectionalAlignment();
+        return;
+      }
+      if (state.alignmentLoading) return;
+      state.alignmentLoading = true;
+      $("alignmentStatus").textContent =
+        "Oracle과 E3의 Fine/Coarse W5 score를 연결하는 중입니다.";
+      try {
+        const response = await fetch("/api/directional-alignment");
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            data.error || "Directional alignment를 불러오지 못했습니다."
+          );
+        }
+        state.alignmentData = data;
+        renderDirectionalAlignment();
+      } catch (error) {
+        $("alignmentStatus").textContent = error.message;
+        $("alignmentCount").textContent = "alignment unavailable";
+        $("alignmentSummary").replaceChildren();
+        $("alignmentTable").replaceChildren();
+        showError(error.message);
+      } finally {
+        state.alignmentLoading = false;
       }
     }
 
@@ -8619,6 +9276,18 @@
           renderComparisons();
         });
       });
+      document.querySelectorAll("[data-alignment-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.alignmentView = button.dataset.alignmentView;
+          renderDirectionalAlignment();
+        });
+      });
+      document.querySelectorAll("[data-alignment-level]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.alignmentLevel = button.dataset.alignmentLevel;
+          renderDirectionalAlignment();
+        });
+      });
       $("oracleRefresh").addEventListener("click", () => loadOracleResults());
       $("oracleVariant").addEventListener("change", () => {
         stopOraclePlayback();
@@ -8704,6 +9373,8 @@
       );
       bindTabArrowNavigation("[data-app-tab]");
       bindTabArrowNavigation("[data-phase-lens]");
+      bindTabArrowNavigation("[data-alignment-view]");
+      bindTabArrowNavigation("[data-alignment-level]");
       $("explorerTask").addEventListener("change", () => {
         state.explorerTask = $("explorerTask").value;
         state.explorerClusterId = null;

@@ -1,6 +1,6 @@
 # GR00T directional phase-feature analysis
 
-- Updated: 2026-07-26
+- Updated: 2026-07-27
 - Model: GR00T N1.5, RoboCasa PQ3, action expert layer 15
 - Primary checkpoint coordinate: batch 4,096, step 10,000 (`10k`)
 - Primary window: W5
@@ -36,6 +36,54 @@ state.
 
 These priorities do not mean the features encode the named semantics. They
 mean the features satisfy the stated ranking contract on the available source.
+
+### 1.1 Oracle–E3 Event-aligned Top-5 alignment
+
+The result browser now exposes a fixed comparison slice for the primary
+`10k`, W5 coordinate. E3 uses coverage `≥0.3`. Each source is ranked separately
+by `matrix_raw`; the direction marker is the largest of the aggregated
+`matrix_pulse`, `matrix_step_up`, and `matrix_step_down` values for that feature.
+
+| Analysis level | Ontology | Comparable units | Top-5 ID overlap | Same-direction overlap |
+| --- | --- | ---: | ---: | ---: |
+| Instruction cell | Fine | 14 | 27 | 9/27 |
+| Instruction cell | Coarse4 | 13 | 28 | 10/28 |
+| Task family | Fine | 3 | 7 | 4/7 |
+| Task family | Coarse4 | 4 | 10 | 5/10 |
+| Task agnostic | Fine | 1 | 3 | 3/3 |
+| Task agnostic | Coarse4 | 1 | 3 | 3/3 |
+
+The task-agnostic comparable phase is `grasp`. Its exact ID-and-direction
+matches are F699↓, F1142↑, and F484ᴾ. Fine and Coarse4 produce the same
+task-agnostic row because all five cells contribute one grasp row in both
+sources.
+
+This table is a descriptive Top-5 intersection, not a new candidate gate.
+Family and task-agnostic rows average within a cell first and then weight cells
+equally. Oracle and E3 raw scores are never averaged together.
+
+### 1.2 Audit for the Oracle–E3 alignment table
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| Length | **FAIL** | W5 is fixed, but episode length and phase dwell are not matched. |
+| Task identity | PASS | Instruction rows compare the same canonical cell and phase; higher levels preserve equal cell weighting. |
+| Instruction balance | PASS | Family and task-agnostic summaries weight canonical cells equally. |
+| In-sample rescue | N/A | No detector or intervention is selected or evaluated by this table. |
+| Rollout pooling | PASS | The underlying score averages events within episode-phase groups before equal episode-group weighting. |
+| Phase / dwell | **FAIL** | Retry, dwell, progress, and transition position remain unmatched. |
+| Observation ≠ causation | PASS | The UI labels the result as descriptive alignment only. |
+| Scene-local ≠ general | **FAIL** | The comparison contains the same five source cells and no held-out scene. |
+| Oracle–V12 clock | **FAIL** | Oracle phase entries and V12 waypoint anchors use different clocks and anchor semantics. |
+
+Claim strength: **diagnostic evidence**.
+
+- The same ID and direction establish semantic identity:
+  **confounded — 판정 보류**.
+- Higher Oracle–E3 Top-5 overlap establishes annotation superiority:
+  **confounded — 판정 보류**.
+- A matched feature changes policy behavior:
+  **confounded — 판정 보류** until held-out intervention.
 
 The best exact three-source state-pair matches are right-drawer
 `grasp→transport`:
@@ -316,6 +364,20 @@ The run verified:
 
 Previous V11, strict V12, Oracle, centroid, SAE, TopK, and annotation artifacts
 remain read-only.
+
+### 12.1 Result browser contract
+
+The read-only browser keeps the historical E0–E4 grid and Oracle explorer
+separate from the final alignment view. The `Oracle ↔ E3 정렬` tab reads:
+
+```text
+GET /api/directional-alignment
+```
+
+It supports Fine/Coarse4 and instruction/family/task-agnostic switches. Feature
+rank remains `matrix_raw`; `↑`, `↓`, and `ᴾ` are representative aggregate
+directions and do not mean rollout consistency. The endpoint validates all four
+Oracle/E3 W5 score artifacts and is cached after the first successful load.
 
 ## 13. Confound audit
 

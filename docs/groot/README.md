@@ -1,6 +1,6 @@
 # GR00T N1.5 / RoboCasa PQ3 status
 
-- Updated: 2026-07-26
+- Updated: 2026-07-27
 - Model: GR00T N1.5, action expert physical layer 15
 - Scope: five instruction/scene cells, 150 source episodes
 - Scientific status: **offline diagnostic evidence**
@@ -17,6 +17,7 @@ reports. Historical execution contracts remain read-only.
 | SAE, waypoints, clustering | Complete offline; three SAE sensitivity checkpoints retained | [Pipeline methods](reports/pipeline_methods.md) |
 | Annotation | V12 provisional 90/90; 89 automatic + 1 user override; human review 0/90 | [Annotation lineage](reports/annotation_lineage.md) |
 | Directional phase discovery | Oracle + V12 E3/E4, 10k SAE, W5 primary | [Phase-feature analysis](reports/phase_feature_analysis.md) |
+| Result UI | Historical E0–E4 explorer + Oracle browser + final Oracle–E3 alignment | [UI contract](reports/phase_feature_analysis.md#121-result-browser-contract) |
 | Strict historical inference | Oracle 0/25, V12 0/112, centroid E4 0/11 after their stated corrections | [Strict appendix](reports/phase_feature_analysis.md#11-strict-and-historical-appendix) |
 | Closed-loop steering | Not run | [Probe design](reports/phase_feature_analysis.md#10-hooked-sr-probe-design) |
 
@@ -54,6 +55,18 @@ boundary-only.
 These are discovery candidates. They do not establish semantic identity,
 causal control, or success-rate improvement. Claim strength remains
 **diagnostic evidence**.
+
+The final UI-facing Oracle–E3 Top-5 slice is:
+
+| Level | Fine | Coarse4 |
+| --- | --- | --- |
+| Instruction | 14 rows · 9/27 same direction | 13 rows · 10/28 |
+| Task family | 3 rows · 4/7 | 4 rows · 5/10 |
+| Task agnostic | grasp · 3/3 | grasp · 3/3 |
+
+Here `↑`, `↓`, and `ᴾ` are aggregate representative directions. They are not
+rollout consistency or causal evidence. The same-ID-and-direction semantics
+claim remains **confounded — 판정 보류**.
 
 ## 3. Documentation map
 
@@ -165,6 +178,9 @@ Serve the result explorer:
 conda run -n event-sae-dev \
   python scripts/review_clusters.py results --host 127.0.0.1 --port 8766
 ```
+
+The server is local-only. The `Oracle ↔ E3 정렬` tab uses the immutable
+directional W5 artifacts and keeps Oracle/E3 source scores separate.
 
 Run blind review on its separate route and output:
 
